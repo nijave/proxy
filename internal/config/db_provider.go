@@ -243,7 +243,7 @@ func (p *DBConfigProvider) loadSupermodels(ctx context.Context, workspaceID stri
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	supermodels := make(map[string]*dbSupermodelRecord)
 	for rows.Next() {
@@ -277,7 +277,7 @@ func (p *DBConfigProvider) loadProviders(ctx context.Context, workspaceID string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	providers := make(map[string]*dbProviderRecord)
 	for rows.Next() {

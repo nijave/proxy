@@ -97,7 +97,7 @@ func TestCloudAuthProvider_Authenticate_Success(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -216,7 +216,7 @@ func TestCloudAuthProvider_Authenticate_InactiveToken(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -237,7 +237,7 @@ func TestCloudAuthProvider_Authenticate_InactiveToken(t *testing.T) {
 func TestCloudAuthProvider_Authenticate_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		_, _ = w.Write([]byte("internal server error"))
 	}))
 	defer server.Close()
 
@@ -312,7 +312,7 @@ func TestCloudAuthProvider_Authenticate_CacheHit(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -365,7 +365,7 @@ func TestCloudAuthProvider_Authenticate_CacheExpiration(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -415,7 +415,7 @@ func TestCloudAuthProvider_RevokeCache(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -513,7 +513,7 @@ func TestCloudAuthProvider_ClearCache(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -524,7 +524,7 @@ func TestCloudAuthProvider_ClearCache(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("Authorization", "Bearer token-"+string(rune('0'+i)))
-		provider.Authenticate(ctx, req)
+		_, _ = provider.Authenticate(ctx, req)
 	}
 
 	total, _ := provider.CacheStats()
@@ -553,7 +553,7 @@ func TestCloudAuthProvider_CacheStats(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -564,7 +564,7 @@ func TestCloudAuthProvider_CacheStats(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	req.Header.Set("Authorization", "Bearer stats-token")
 	ctx := context.Background()
-	provider.Authenticate(ctx, req)
+	_, _ = provider.Authenticate(ctx, req)
 
 	total, expired := provider.CacheStats()
 	if total != 1 {
@@ -598,7 +598,7 @@ func TestCloudAuthProvider_ConcurrentAccess(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -627,7 +627,7 @@ func TestCloudAuthProvider_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			provider.RevokeCache(ctx, "key_concurrent")
+			_ = provider.RevokeCache(ctx, "key_concurrent")
 		}()
 	}
 
@@ -672,7 +672,7 @@ func TestCloudAuthProvider_SubjectTypes(t *testing.T) {
 
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 			}))
 			defer server.Close()
 
@@ -709,7 +709,7 @@ func TestCloudAuthProvider_ServiceToken(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -773,7 +773,7 @@ func TestCloudAuthProvider_BackgroundRefresh(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -828,7 +828,7 @@ func TestCloudAuthProvider_BackgroundRefresh_InactiveToken(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -915,7 +915,7 @@ func TestCloudAuthProvider_Integration(t *testing.T) {
 		// Return different responses based on token
 		switch req.Token {
 		case "valid-admin-token":
-			json.NewEncoder(w).Encode(IntrospectionResponse{
+			_ = json.NewEncoder(w).Encode(IntrospectionResponse{
 				Active:           true,
 				KeyID:            "admin_key",
 				WorkspaceID:      "workspace_123",
@@ -934,13 +934,13 @@ func TestCloudAuthProvider_Integration(t *testing.T) {
 				},
 			})
 		case "expired-token":
-			json.NewEncoder(w).Encode(IntrospectionResponse{
+			_ = json.NewEncoder(w).Encode(IntrospectionResponse{
 				Active:      false,
 				KeyID:       "expired_key",
 				WorkspaceID: "workspace_123",
 			})
 		case "limited-token":
-			json.NewEncoder(w).Encode(IntrospectionResponse{
+			_ = json.NewEncoder(w).Encode(IntrospectionResponse{
 				Active:           true,
 				KeyID:            "limited_key",
 				WorkspaceID:      "workspace_456",
@@ -1056,7 +1056,7 @@ func TestCloudAuthProvider_ErrorScenarios(t *testing.T) {
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("not valid json"))
+				_, _ = w.Write([]byte("not valid json"))
 			},
 			expectedErr: ErrAuthenticationFailed,
 			description: "server returns invalid JSON",
@@ -1104,7 +1104,7 @@ func BenchmarkCloudAuthProvider_Authenticate(b *testing.B) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -1116,12 +1116,12 @@ func BenchmarkCloudAuthProvider_Authenticate(b *testing.B) {
 	ctx := context.Background()
 
 	// Warm up cache
-	provider.Authenticate(ctx, req)
+	_, _ = provider.Authenticate(ctx, req)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Use cache hit
-		provider.Authenticate(ctx, req)
+		_, _ = provider.Authenticate(ctx, req)
 	}
 }
 
@@ -1137,7 +1137,7 @@ func BenchmarkCloudAuthProvider_Authenticate_CacheMiss(b *testing.B) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -1149,6 +1149,6 @@ func BenchmarkCloudAuthProvider_Authenticate_CacheMiss(b *testing.B) {
 		// Use unique tokens to ensure cache misses
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer bench-token-%d", i))
-		provider.Authenticate(ctx, req)
+		_, _ = provider.Authenticate(ctx, req)
 	}
 }

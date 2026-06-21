@@ -194,7 +194,7 @@ func (p *CloudAuthProvider) callIntrospectionEndpoint(ctx context.Context, token
 	if err != nil {
 		return nil, fmt.Errorf("introspection request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Handle non-2xx responses as failures (fail closed).
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -327,7 +327,7 @@ func (p *CloudAuthProvider) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("introspection endpoint unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Any HTTP response (even 401/403) means the endpoint is reachable.
 	// Only network errors or timeouts should cause health check to fail.

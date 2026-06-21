@@ -360,7 +360,7 @@ func (p *LocalKeyAuthProvider) startWatcher() error {
 	// Watch the directory, not the file itself (handles atomic renames).
 	dir := filepath.Dir(p.configPath)
 	if err := watcher.Add(dir); err != nil {
-		watcher.Close()
+		_ = watcher.Close()
 		return fmt.Errorf("watching config directory: %w", err)
 	}
 

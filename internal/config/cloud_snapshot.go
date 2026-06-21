@@ -112,7 +112,7 @@ func (p *CloudSnapshotConfigProvider) fetchSnapshot(ctx context.Context, workspa
 	if err != nil {
 		return nil, fmt.Errorf("fetching snapshot: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -312,7 +312,7 @@ func (p *CloudSnapshotConfigProvider) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Accept only 2xx status as healthy
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

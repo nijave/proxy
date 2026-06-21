@@ -269,7 +269,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 	authCtx := &auth.AuthContext{
@@ -359,7 +359,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 	_, err = provider.GetEffectiveConfig(ctx, nil)
@@ -397,7 +397,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 	ref := auth.ConfigRef{
@@ -449,7 +449,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 
@@ -502,7 +502,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 
@@ -540,7 +540,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	// Delete the file
 	if err := os.Remove(configPath); err != nil {
@@ -581,7 +581,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	// Get initial version
 	if provider.runtime.Version != "1.0" {
@@ -648,7 +648,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	// Save initial config
 	initialConfig := *provider.runtime
@@ -763,7 +763,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	ctx := context.Background()
 	authCtx := &auth.AuthContext{
@@ -857,7 +857,7 @@ workspaces:
 	if err != nil {
 		t.Fatalf("NewFileConfigProvider() failed: %v", err)
 	}
-	defer provider.StopWatching()
+	defer func() { _ = provider.StopWatching() }()
 
 	// Check default supermodel has scenarios
 	if sm, ok := provider.runtime.Supermodels["default"]; !ok {

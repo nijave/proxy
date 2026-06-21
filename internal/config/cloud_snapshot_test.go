@@ -72,7 +72,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -134,7 +134,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_WrappedResponse(t *testi
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -175,7 +175,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_WithAuthHeader(t *testin
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -218,7 +218,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_NilAuth(t *testing.T) {
 func TestCloudSnapshotConfigProvider_GetEffectiveConfig_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "internal server error")
+		_, _ = fmt.Fprint(w, "internal server error")
 	}))
 	defer server.Close()
 
@@ -245,7 +245,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_ServerError(t *testing.T
 func TestCloudSnapshotConfigProvider_GetEffectiveConfig_NotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, "configuration not found")
+		_, _ = fmt.Fprint(w, "configuration not found")
 	}))
 	defer server.Close()
 
@@ -273,7 +273,7 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_InvalidJSON(t *testing.T
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "not valid json {{ ")
+		_, _ = fmt.Fprint(w, "not valid json {{ ")
 	}))
 	defer server.Close()
 
@@ -304,7 +304,7 @@ func TestCloudSnapshotConfigProvider_GetConfigByRef(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -346,7 +346,7 @@ func TestCloudSnapshotConfigProvider_TTLExpiration(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -391,7 +391,7 @@ func TestCloudSnapshotConfigProvider_InfiniteTTL(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -434,7 +434,7 @@ func TestCloudSnapshotConfigProvider_Invalidate_SpecificVersion(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -489,7 +489,7 @@ func TestCloudSnapshotConfigProvider_Invalidate_AllVersions(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -541,7 +541,7 @@ func TestCloudSnapshotConfigProvider_Invalidate_AllVersions(t *testing.T) {
 func TestCloudSnapshotConfigProvider_HealthCheck_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "healthy")
+		_, _ = fmt.Fprint(w, "healthy")
 	}))
 	defer server.Close()
 
@@ -557,7 +557,7 @@ func TestCloudSnapshotConfigProvider_HealthCheck_Success(t *testing.T) {
 func TestCloudSnapshotConfigProvider_HealthCheck_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, "unhealthy")
+		_, _ = fmt.Fprint(w, "unhealthy")
 	}))
 	defer server.Close()
 
@@ -604,7 +604,7 @@ func TestCloudSnapshotConfigProvider_ConcurrentAccess(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -664,7 +664,7 @@ func TestCloudSnapshotConfigProvider_DifferentWorkspaces(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 
@@ -808,7 +808,7 @@ func TestCloudSnapshotConfigProvider_WrappedConfigPopulatesFields(t *testing.T) 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -858,7 +858,7 @@ func TestCloudSnapshotConfigProvider_NetworkError(t *testing.T) {
 		if err != nil {
 			return
 		}
-		conn.Close()
+		_ = conn.Close()
 	}))
 	defer server.Close()
 
@@ -896,7 +896,7 @@ func TestCloudSnapshotConfigProvider_DoubleCheckPattern(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(config)
+		_ = json.NewEncoder(w).Encode(config)
 	}))
 	defer server.Close()
 

@@ -29,7 +29,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	t.Cleanup(func() {
-		db.Close()
+		_ = db.Close()
 	})
 
 	return db
@@ -193,7 +193,7 @@ func TestNewDBConfigProvider(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			defer provider.Close()
+			defer func() { _ = provider.Close() }()
 
 			if provider.db == nil {
 				t.Error("expected non-nil db")
@@ -214,7 +214,7 @@ func TestDBConfigProvider_GetConfigByRef(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	ref := auth.ConfigRef{
@@ -326,7 +326,7 @@ func TestDBConfigProvider_GetConfigByRef_NotFound(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	ref := auth.ConfigRef{
@@ -349,7 +349,7 @@ func TestDBConfigProvider_GetConfigByRef_VersionMismatch(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	ref := auth.ConfigRef{
@@ -372,7 +372,7 @@ func TestDBConfigProvider_GetConfigByRef_EmptyVersion(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	ref := auth.ConfigRef{
@@ -396,7 +396,7 @@ func TestDBConfigProvider_GetEffectiveConfig(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	authCtx := &auth.AuthContext{
@@ -440,7 +440,7 @@ func TestDBConfigProvider_HealthCheck(t *testing.T) {
 	}
 
 	// Close db and verify health check fails
-	provider.Close()
+	_ = provider.Close()
 
 	if err := provider.HealthCheck(ctx); err == nil {
 		t.Error("expected HealthCheck to fail after Close")
@@ -455,7 +455,7 @@ func TestDBConfigProvider_GetEffectiveConfig_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// Seed directly into provider's db
 	workspaceConfig := map[string]interface{}{
@@ -509,7 +509,7 @@ func TestDBConfigProvider_Invalidate(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	authCtx := &auth.AuthContext{
@@ -549,7 +549,7 @@ func TestDBConfigProvider_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// Seed data
 	workspaceConfig := map[string]interface{}{
@@ -637,7 +637,7 @@ func TestDBConfigProvider_ContextCancellation(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// Create cancelled context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -676,7 +676,7 @@ func TestDBConfigProvider_MultipleWorkspaces(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 
@@ -706,7 +706,7 @@ func TestDBConfigProvider_ConcurrentHealthCheck(t *testing.T) {
 
 	provider := &DBConfigProvider{db: db, driver: "sqlite"}
 	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	var wg sync.WaitGroup
 	numGoroutines := 100

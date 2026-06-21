@@ -39,7 +39,7 @@ func TestNewLocalKeyAuthProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	if provider.configPath != keysFile {
 		t.Errorf("expected config path %q, got %q", keysFile, provider.configPath)
@@ -75,7 +75,7 @@ keys:
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	provider.mu.RLock()
 	if len(provider.keys) != 1 {
@@ -116,7 +116,7 @@ func TestLocalKeyAuthProvider_Authenticate_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, err := http.NewRequest("GET", "http://localhost/test", nil)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestLocalKeyAuthProvider_Authenticate_MissingHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	ctx := context.Background()
@@ -198,7 +198,7 @@ func TestLocalKeyAuthProvider_Authenticate_InvalidFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Basic secret") // Wrong scheme
@@ -223,7 +223,7 @@ func TestLocalKeyAuthProvider_Authenticate_UnknownKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer unknown-secret")
@@ -248,7 +248,7 @@ func TestLocalKeyAuthProvider_Authenticate_RevokedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer revoked-secret")
@@ -273,7 +273,7 @@ func TestLocalKeyAuthProvider_Authenticate_SuspendedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer suspended-secret")
@@ -298,7 +298,7 @@ func TestLocalKeyAuthProvider_Authenticate_ExpiredKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer expired-secret")
@@ -324,7 +324,7 @@ func TestLocalKeyAuthProvider_Reload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// Verify first key works.
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
@@ -382,7 +382,7 @@ func TestLocalKeyAuthProvider_RevokeCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// First, key should work.
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
@@ -422,7 +422,7 @@ func TestLocalKeyAuthProvider_HealthCheck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	err = provider.HealthCheck(ctx)
@@ -451,8 +451,8 @@ func TestLocalKeyAuthProvider_EnvInterpolation(t *testing.T) {
 	keysFile := filepath.Join(tmpDir, "keys.json")
 
 	// Set an environment variable.
-	os.Setenv("TEST_WS_ID", "env-workspace")
-	defer os.Unsetenv("TEST_WS_ID")
+	_ = os.Setenv("TEST_WS_ID", "env-workspace")
+	defer func() { _ = os.Unsetenv("TEST_WS_ID") }()
 
 	content := `{"version": "1", "keys": [{"id": "key1", "secret": "secret", "workspace_id": "${TEST_WS_ID}", "status": "active"}]}`
 	if err := os.WriteFile(keysFile, []byte(content), 0644); err != nil {
@@ -463,7 +463,7 @@ func TestLocalKeyAuthProvider_EnvInterpolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer secret")
@@ -496,7 +496,7 @@ func TestLocalKeyAuthProvider_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	ctx := context.Background()
 	var wg sync.WaitGroup
@@ -720,7 +720,7 @@ func TestLocalKey_AuthContextIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("POST", "http://localhost/v1/chat/completions", nil)
 	req.Header.Set("Authorization", "Bearer rt_local_integration_secret")
@@ -816,7 +816,7 @@ func TestLocalKeyAuthProvider_Reload_WithMultipleKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	provider.mu.RLock()
 	if len(provider.keys) != 3 {
@@ -911,7 +911,7 @@ func TestLocalKeyAuthProvider_EmptyAllowedLists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer secret")
@@ -978,7 +978,7 @@ keys:
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	// Test engineering key.
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
@@ -1056,7 +1056,7 @@ func BenchmarkAuthenticate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create provider: %v", err)
 	}
-	defer provider.Close()
+	defer func() { _ = provider.Close() }()
 
 	req, _ := http.NewRequest("GET", "http://localhost/test", nil)
 	req.Header.Set("Authorization", "Bearer secret500")
