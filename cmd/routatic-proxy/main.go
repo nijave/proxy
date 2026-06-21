@@ -295,7 +295,7 @@ func initAuthProvider(cfg *config.Config) (auth.AuthProvider, error) {
 }
 
 // initConfigProvider creates a ConfigProvider based on the configuration.
-// Supported providers: "file", "db", "cloud_snapshot", "" (static bootstrap config).
+// Supported providers: "file", "db", "cloud_snapshot", "" (autodetect).
 func initConfigProvider(cfg *config.Config) (config.ConfigProvider, error) {
 	provider := cfg.ConfigProv.Provider
 
@@ -304,9 +304,23 @@ func initConfigProvider(cfg *config.Config) (config.ConfigProvider, error) {
 
 	switch provider {
 	case "":
-		// No explicit config provider - use static config from bootstrap.
-		// This is the default for simple deployments without a config file.
-		underlying = config.NewStaticConfigProvider(config.CreateBootstrapRuntimeConfig(cfg))
+		// No explicit config provider - autodetect based on whether config file exists.
+		// If config file exists, use file provider for hot reload.
+		// Otherwise, use static bootstrap config (for simple/serverless deployments).
+		configPath := cfg.ConfigProv.Path
+		if configPath == "" {
+			configPath = config.ResolveConfigPath()
+		}
+		if _, statErr := os.Stat(configPath); statErr == nil {
+			// Config file exists - use file provider for hot reload support
+			underlying, err = config.NewFileConfigProvider(configPath)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			// No config file - use static bootstrap config
+			underlying = config.NewStaticConfigProvider(config.CreateBootstrapRuntimeConfig(cfg))
+		}
 
 	case "file":
 		path := cfg.ConfigProv.Path
@@ -345,8 +359,12 @@ func initConfigProvider(cfg *config.Config) (config.ConfigProvider, error) {
 		return nil, fmt.Errorf("unknown config provider: %s", provider)
 	}
 
-	// Wrap with cache for all providers except file (which has its own caching)
-	if provider != "file" {
+	// Wrap with cache for providers that benefit from it:
+	// - Static bootstrap config: cache to avoid recreating RuntimeConfig on every request
+	// - Cloud snapshot: cache to avoid hitting cloud API on every request
+	// - File provider: has its own internal caching via hot reload, don't wrap
+	needsCache := provider == "" || provider == "cloud_snapshot" || provider == "db"
+	if needsCache {
 		ttl := cfg.ConfigProv.CacheTTL
 		if ttl <= 0 {
 			ttl = 15 * time.Second

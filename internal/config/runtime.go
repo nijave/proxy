@@ -119,12 +119,26 @@ func (pc *ProviderConfig) EffectiveAPIKeys() []string {
 	return nil
 }
 
+// copyStringSlice creates a shallow copy of a string slice.
+// Returns nil if the input is nil. Returns an empty slice if the input is empty.
+func copyStringSlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	result := make([]string, len(s))
+	copy(result, s)
+	return result
+}
+
 // CreateBootstrapRuntimeConfig creates a RuntimeConfig from the bootstrap Config.
 // This is used when no external ConfigProvider is configured (simple mode).
 // The runtime config uses settings from the bootstrap config directly.
 func CreateBootstrapRuntimeConfig(cfg *Config) *RuntimeConfig {
 	// Build providers map from bootstrap config
 	providers := make(map[string]ProviderConfig)
+
+	// Copy API keys to avoid sharing the same slice reference between providers
+	apiKeys := copyStringSlice(cfg.EffectiveAPIKeys())
 
 	// Add OpenCode Go provider
 	if cfg.OpenCodeGo.BaseURL != "" {
@@ -135,7 +149,7 @@ func CreateBootstrapRuntimeConfig(cfg *Config) *RuntimeConfig {
 			AnthropicBaseURL: cfg.OpenCodeGo.AnthropicBaseURL,
 			TimeoutMs:        cfg.OpenCodeGo.TimeoutMs,
 			StreamTimeoutMs:  cfg.OpenCodeGo.StreamTimeoutMs,
-			APIKeys:          cfg.EffectiveAPIKeys(),
+			APIKeys:          copyStringSlice(apiKeys),
 		}
 	}
 
@@ -150,7 +164,7 @@ func CreateBootstrapRuntimeConfig(cfg *Config) *RuntimeConfig {
 			GeminiBaseURL:    cfg.OpenCodeZen.GeminiBaseURL,
 			TimeoutMs:        cfg.OpenCodeZen.TimeoutMs,
 			StreamTimeoutMs:  cfg.OpenCodeZen.StreamTimeoutMs,
-			APIKeys:          cfg.EffectiveAPIKeys(),
+			APIKeys:          copyStringSlice(apiKeys),
 		}
 	}
 
