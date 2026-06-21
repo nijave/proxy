@@ -744,25 +744,12 @@ func convertProviderFileConfigToProviderConfig(pfc ProviderFileConfig) ProviderC
 
 // convertLoggingFileConfigToLoggingPolicy converts LoggingFileConfig to LoggingPolicy.
 func convertLoggingFileConfigToLoggingPolicy(lfc LoggingFileConfig) LoggingPolicy {
-	return LoggingPolicy{
-		Level:            lfc.Level,
-		LogRequests:      lfc.LogRequests,
-		LogResponses:     lfc.LogResponses,
-		LogLatency:       lfc.LogLatency,
-		LogRateLimits:    lfc.LogRateLimits,
-		PIIMasking:       lfc.PIIMasking,
-		SensitiveHeaders: lfc.SensitiveHeaders,
-	}
+	return LoggingPolicy(lfc)
 }
 
 // convertEnforcementFileConfigToEnforcementPolicy converts EnforcementFileConfig to EnforcementPolicy.
 func convertEnforcementFileConfigToEnforcementPolicy(efc EnforcementFileConfig) EnforcementPolicy {
-	return EnforcementPolicy{
-		RequireAuth:           efc.RequireAuth,
-		EnforceModelAllowlist: efc.EnforceModelAllowlist,
-		EnforceBudgets:        efc.EnforceBudgets,
-		EnforceRateLimits:     efc.EnforceRateLimits,
-	}
+	return EnforcementPolicy(efc)
 }
 
 // boolPtr returns a pointer to a bool value.

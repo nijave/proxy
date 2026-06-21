@@ -61,9 +61,6 @@ func NewStaticConfigProvider(cfg *RuntimeConfig) *StaticConfigProvider {
 		// Also index by "default" and "" for flexibility
 		configs["default"] = cfg
 		configs[""] = cfg
-	} else {
-		// When nil, we'll return ErrConfigNotLoaded
-		// This maintains backward compatibility behavior
 	}
 	return &StaticConfigProvider{
 		config: configs,
