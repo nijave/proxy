@@ -4,6 +4,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"slices"
 )
 
 // AuthContext holds the complete authentication and authorization context
@@ -78,22 +79,14 @@ type AuthProvider interface {
 
 // HasRole checks if the subject has the specified role.
 func (a *AuthContext) HasRole(role string) bool {
-	for _, r := range a.Roles {
-		if r == role {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a.Roles, role)
 }
 
 // HasAnyRole checks if the subject has any of the specified roles.
 func (a *AuthContext) HasAnyRole(roles ...string) bool {
-	for _, role := range roles {
-		if a.HasRole(role) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(roles, func(role string) bool {
+		return a.HasRole(role)
+	})
 }
 
 // IsAllowedModel checks if the subject can use the specified model.
@@ -101,12 +94,7 @@ func (a *AuthContext) IsAllowedModel(modelID string) bool {
 	if len(a.AllowedModels) == 0 {
 		return true
 	}
-	for _, m := range a.AllowedModels {
-		if m == modelID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a.AllowedModels, modelID)
 }
 
 // IsAllowedProvider checks if the subject can use the specified provider.
@@ -114,12 +102,7 @@ func (a *AuthContext) IsAllowedProvider(providerID string) bool {
 	if len(a.AllowedProviders) == 0 {
 		return true
 	}
-	for _, p := range a.AllowedProviders {
-		if p == providerID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a.AllowedProviders, providerID)
 }
 
 // Key returns the value for the given metadata key, or empty string if not present.
