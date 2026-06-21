@@ -295,18 +295,19 @@ func initAuthProvider(cfg *config.Config) (auth.AuthProvider, error) {
 }
 
 // initConfigProvider creates a ConfigProvider based on the configuration.
-// Supported providers: "file", "db", "cloud_snapshot".
+// Supported providers: "file", "db", "cloud_snapshot", "" (static bootstrap config).
 func initConfigProvider(cfg *config.Config) (config.ConfigProvider, error) {
 	provider := cfg.ConfigProv.Provider
-	if provider == "" {
-		// Default to "file" for backward compatibility
-		provider = "file"
-	}
 
 	var underlying config.ConfigProvider
 	var err error
 
 	switch provider {
+	case "":
+		// No explicit config provider - use static config from bootstrap.
+		// This is the default for simple deployments without a config file.
+		underlying = config.NewStaticConfigProvider(config.CreateBootstrapRuntimeConfig(cfg))
+
 	case "file":
 		path := cfg.ConfigProv.Path
 		if path == "" {

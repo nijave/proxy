@@ -118,3 +118,89 @@ func (pc *ProviderConfig) EffectiveAPIKeys() []string {
 	}
 	return nil
 }
+
+// CreateBootstrapRuntimeConfig creates a RuntimeConfig from the bootstrap Config.
+// This is used when no external ConfigProvider is configured (simple mode).
+// The runtime config uses settings from the bootstrap config directly.
+func CreateBootstrapRuntimeConfig(cfg *Config) *RuntimeConfig {
+	// Build providers map from bootstrap config
+	providers := make(map[string]ProviderConfig)
+
+	// Add OpenCode Go provider
+	if cfg.OpenCodeGo.BaseURL != "" {
+		providers["opencode-go"] = ProviderConfig{
+			Name:             "OpenCode Go",
+			Type:             "opencode-go",
+			BaseURL:          cfg.OpenCodeGo.BaseURL,
+			AnthropicBaseURL: cfg.OpenCodeGo.AnthropicBaseURL,
+			TimeoutMs:        cfg.OpenCodeGo.TimeoutMs,
+			StreamTimeoutMs:  cfg.OpenCodeGo.StreamTimeoutMs,
+			APIKeys:          cfg.EffectiveAPIKeys(),
+		}
+	}
+
+	// Add OpenCode Zen provider
+	if cfg.OpenCodeZen.BaseURL != "" {
+		providers["opencode-zen"] = ProviderConfig{
+			Name:             "OpenCode Zen",
+			Type:             "opencode-zen",
+			BaseURL:          cfg.OpenCodeZen.BaseURL,
+			AnthropicBaseURL: cfg.OpenCodeZen.AnthropicBaseURL,
+			ResponsesBaseURL: cfg.OpenCodeZen.ResponsesBaseURL,
+			GeminiBaseURL:    cfg.OpenCodeZen.GeminiBaseURL,
+			TimeoutMs:        cfg.OpenCodeZen.TimeoutMs,
+			StreamTimeoutMs:  cfg.OpenCodeZen.StreamTimeoutMs,
+			APIKeys:          cfg.EffectiveAPIKeys(),
+		}
+	}
+
+	// Add AWS Bedrock provider if configured
+	if cfg.AWSBedrock.BaseURL != "" {
+		providers["aws-bedrock"] = ProviderConfig{
+			Name:      "AWS Bedrock",
+			Type:      "aws-bedrock",
+			BaseURL:   cfg.AWSBedrock.BaseURL,
+			APIKey:    cfg.AWSBedrock.APIKey,
+			TimeoutMs: cfg.AWSBedrock.TimeoutMs,
+		}
+	}
+
+	// Convert bootstrap models to supermodels
+	supermodels := make(map[string]Supermodel)
+	for name, modelCfg := range cfg.Models {
+		supermodels[name] = Supermodel{
+			Name: name,
+			Default: ModelConfig{
+				Provider:        modelCfg.Provider,
+				ModelID:         modelCfg.ModelID,
+				Temperature:     modelCfg.Temperature,
+				MaxTokens:       modelCfg.MaxTokens,
+				MaxOutputTokens: modelCfg.MaxOutputTokens,
+				ContextWindow:   modelCfg.ContextWindow,
+				ReasoningEffort: modelCfg.ReasoningEffort,
+				Thinking:        modelCfg.Thinking,
+			},
+		}
+	}
+
+	workspaceID := "bootstrap"
+	if cfg.Mode == "managed" && cfg.Auth.Provider == "cloud" {
+		// In cloud mode, use a placeholder - actual workspace comes from auth
+		workspaceID = "cloud-managed"
+	}
+
+	return &RuntimeConfig{
+		WorkspaceID:     workspaceID,
+		Version:         "1.0",
+		Supermodels:     supermodels,
+		Providers:       providers,
+		CapabilityIndex: make(map[string]ModelCapabilities),
+		LoggingPolicy: LoggingPolicy{
+			Level:       cfg.Logging.Level,
+			LogRequests: cfg.Logging.Requests,
+		},
+		Enforcement: EnforcementPolicy{
+			RequireAuth: cfg.APIKey == "" && len(cfg.APIKeys) == 0,
+		},
+	}
+}
