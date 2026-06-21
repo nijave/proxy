@@ -39,22 +39,20 @@ const (
 // HostedConfig holds the minimal configuration for hosted mode.
 // All values come from environment variables.
 type HostedConfig struct {
-	Port            int
-	CloudBaseURL    string
-	ServiceToken    string
-	LogLevel        string
-	HealthCheckPort int
+	Port         int
+	CloudBaseURL string
+	ServiceToken string
+	LogLevel     string
 }
 
 // loadHostedConfig creates configuration from environment variables.
 // No config files are read - everything comes from env vars.
 func loadHostedConfig() (*HostedConfig, error) {
 	cfg := &HostedConfig{
-		Port:            getEnvInt("PORT", defaultPort),
-		CloudBaseURL:    getEnv("ROUTATIC_CLOUD_BASE_URL", defaultCloudBaseURL),
-		ServiceToken:    getEnv("ROUTATIC_SERVICE_TOKEN", ""),
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
-		HealthCheckPort: getEnvInt("HEALTH_CHECK_PORT", 0),
+		Port:         getEnvInt("PORT", defaultPort),
+		CloudBaseURL: getEnv("ROUTATIC_CLOUD_BASE_URL", defaultCloudBaseURL),
+		ServiceToken: getEnv("ROUTATIC_SERVICE_TOKEN", ""),
+		LogLevel:     getEnv("LOG_LEVEL", "info"),
 	}
 
 	if cfg.ServiceToken == "" {
@@ -167,6 +165,12 @@ func NewCloudConfigProvider(baseURL, serviceToken string) *CloudConfigProvider {
 	}
 }
 
+// HealthCheck is a no-op for hosted mode - health checking is handled externally.
+// The underlying raw provider implements the actual interface method.
+func (p *CloudConfigProvider) HealthCheck(ctx context.Context) error {
+	return p.cache.HealthCheck(ctx)
+}
+
 // cloudConfigRawProvider is the underlying provider that actually fetches from cloud
 type cloudConfigRawProvider struct {
 	baseURL      string
@@ -256,33 +260,9 @@ func (p *cloudConfigRawProvider) Invalidate(ctx context.Context, workspaceID, ve
 	return nil // Cloud provider manages its own caching
 }
 
-// HealthCheck checks cloud connectivity via the cached provider's underlying raw provider
-func (p *CloudConfigProvider) HealthCheck(ctx context.Context) error {
-	// Try to get effective config as health check
-	_, err := p.cache.GetEffectiveConfig(ctx, nil)
-	return err
-}
-
+// HealthCheck is a no-op for hosted mode - health checking is handled externally.
+// Required to satisfy ConfigProvider interface.
 func (p *cloudConfigRawProvider) HealthCheck(ctx context.Context) error {
-	url := p.baseURL + configSnapshotPath
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+p.serviceToken)
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("health check failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("health check returned status %d", resp.StatusCode)
-	}
-
 	return nil
 }
 
@@ -383,9 +363,6 @@ func (s *HostedServer) Start() error {
 	// Create HTTP mux
 	mux := http.NewServeMux()
 
-	// Health endpoint
-	mux.HandleFunc("/health", s.handleHealth)
-
 	// Main proxy endpoint - authenticates and proxies requests
 	mux.HandleFunc("/v1/messages", s.handleProxy)
 	mux.HandleFunc("/v1/chat/completions", s.handleProxy)
@@ -406,26 +383,6 @@ func (s *HostedServer) Start() error {
 	)
 
 	return s.httpServer.ListenAndServe()
-}
-
-// handleHealth responds to health checks
-func (s *HostedServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Check cloud connectivity
-	if err := s.configProvider.HealthCheck(ctx); err != nil {
-		slog.Error("health check failed", "error", err)
-		http.Error(w, "unhealthy", http.StatusServiceUnavailable)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-		"mode":   "hosted",
-	}); err != nil {
-		slog.Error("failed to encode health response", "error", err)
-	}
 }
 
 // handleProxy authenticates and proxies requests
