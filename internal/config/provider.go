@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/routatic/proxy/internal/auth"
 )
@@ -42,9 +43,10 @@ type ConfigProvider interface {
 
 // StaticConfigProvider is a ConfigProvider that always returns a fixed RuntimeConfig.
 // Useful for development, testing, and backward compatibility during migrations.
+// Thread-safe via sync.RWMutex.
 type StaticConfigProvider struct {
 	config map[string]*RuntimeConfig // key: workspaceID
-	mu     *struct{}                 // unused, for potential future expansion
+	mu     sync.RWMutex              // guards config map
 }
 
 // NewStaticConfigProvider creates a new StaticConfigProvider that returns the given config
@@ -64,7 +66,6 @@ func NewStaticConfigProvider(cfg *RuntimeConfig) *StaticConfigProvider {
 	}
 	return &StaticConfigProvider{
 		config: configs,
-		mu:     nil, // unused
 	}
 }
 
@@ -73,7 +74,6 @@ func NewStaticConfigProvider(cfg *RuntimeConfig) *StaticConfigProvider {
 func NewStaticConfigProviderWithWorkspaces(configs map[string]*RuntimeConfig) *StaticConfigProvider {
 	return &StaticConfigProvider{
 		config: configs,
-		mu:     nil,
 	}
 }
 
@@ -166,6 +166,8 @@ func (p *StaticConfigProvider) HealthCheck(ctx context.Context) error {
 // SetConfig updates the configuration for a workspace.
 // Safe for concurrent use.
 func (p *StaticConfigProvider) SetConfig(workspaceID string, cfg *RuntimeConfig) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if cfg == nil {
 		delete(p.config, workspaceID)
 		return
@@ -174,7 +176,10 @@ func (p *StaticConfigProvider) SetConfig(workspaceID string, cfg *RuntimeConfig)
 }
 
 // IsNoOp returns true if this provider has no valid configuration loaded.
+// Safe for concurrent use.
 func (p *StaticConfigProvider) IsNoOp() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	for _, cfg := range p.config {
 		if cfg != nil {
 			return false
