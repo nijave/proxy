@@ -20,24 +20,24 @@ import (
 )
 
 const (
-	defaultPort             = 3456
-	defaultCloudBaseURL     = "https://api.routatic.cloud"
-	authIntrospectionPath   = "/v1/auth/introspect"
-	configSnapshotPath      = "/v1/config/snapshot"
-	metricsEndpointPath     = "/v1/metrics/ingest"
-	defaultRequestTimeout   = 300 * time.Second
-	defaultStreamTimeout    = 600 * time.Second
-	defaultCloudTimeout     = 30 * time.Second
+	defaultPort           = 3456
+	defaultCloudBaseURL   = "https://api.routatic.cloud"
+	authIntrospectionPath = "/v1/auth/introspect"
+	configSnapshotPath    = "/v1/config/snapshot"
+	metricsEndpointPath   = "/v1/metrics/ingest"
+	defaultRequestTimeout = 300 * time.Second
+	defaultStreamTimeout  = 600 * time.Second
+	defaultCloudTimeout   = 30 * time.Second
 )
 
 // HostedConfig holds the minimal configuration for hosted mode.
 // All values come from environment variables.
 type HostedConfig struct {
-	Port              int
-	CloudBaseURL      string
-	ServiceToken      string
-	LogLevel          string
-	HealthCheckPort   int
+	Port            int
+	CloudBaseURL    string
+	ServiceToken    string
+	LogLevel        string
+	HealthCheckPort int
 }
 
 // loadHostedConfig creates configuration from environment variables.
@@ -283,25 +283,25 @@ func (r *MetricsReporter) ReportRequest(ctx context.Context, req MetricsRequest)
 
 // MetricsRequest represents usage metrics to report
 type MetricsRequest struct {
-	WorkspaceID   string        `json:"workspace_id"`
-	KeyID         string        `json:"key_id"`
-	ModelID       string        `json:"model_id"`
-	TokensUsed    int           `json:"tokens_used"`
-	TokensInput   int           `json:"tokens_input"`
-	TokensOutput  int           `json:"tokens_output"`
-	DurationMs    int64         `json:"duration_ms"`
-	Status        string        `json:"status"`
-	Error         string        `json:"error,omitempty"`
-	Timestamp     time.Time     `json:"timestamp"`
+	WorkspaceID  string    `json:"workspace_id"`
+	KeyID        string    `json:"key_id"`
+	ModelID      string    `json:"model_id"`
+	TokensUsed   int       `json:"tokens_used"`
+	TokensInput  int       `json:"tokens_input"`
+	TokensOutput int       `json:"tokens_output"`
+	DurationMs   int64     `json:"duration_ms"`
+	Status       string    `json:"status"`
+	Error        string    `json:"error,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // HostedServer wraps the standard server with cloud-specific functionality
 type HostedServer struct {
-	cfg              *HostedConfig
-	authProvider     *CloudAuthProvider
-	configProvider   *CloudConfigProvider
-	metricsReporter  *MetricsReporter
-	httpServer       *http.Server
+	cfg             *HostedConfig
+	authProvider    *CloudAuthProvider
+	configProvider  *CloudConfigProvider
+	metricsReporter *MetricsReporter
+	httpServer      *http.Server
 }
 
 // NewHostedServer creates a new hosted server instance
@@ -342,8 +342,8 @@ func (s *HostedServer) Start() error {
 	// Create server
 	addr := fmt.Sprintf(":%d", s.cfg.Port)
 	s.httpServer = &http.Server{
-		Addr:        addr,
-		Handler:     mux,
+		Addr:         addr,
+		Handler:      mux,
 		ReadTimeout:  120 * time.Second,
 		WriteTimeout: 0, // No timeout for streaming
 		IdleTimeout:  300 * time.Second,
@@ -426,10 +426,10 @@ func (s *HostedServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		duration := time.Since(start).Milliseconds()
 		metrics := MetricsRequest{
-			WorkspaceID:  authResp.WorkspaceID,
-			KeyID:        authResp.KeyID,
-			DurationMs:   duration,
-			Timestamp:    time.Now(),
+			WorkspaceID: authResp.WorkspaceID,
+			KeyID:       authResp.KeyID,
+			DurationMs:  duration,
+			Timestamp:   time.Now(),
 		}
 
 		if err := s.metricsReporter.ReportRequest(context.Background(), metrics); err != nil {
