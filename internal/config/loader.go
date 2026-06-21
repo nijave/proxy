@@ -222,10 +222,32 @@ func applyDefaults(cfg *Config) {
 	}
 }
 
+// isCloudManagedMode returns true if the config is in managed mode with cloud providers.
+// In this mode, API keys and model configuration come from the cloud snapshot,
+// so they are not required in the local bootstrap config.
+func isCloudManagedMode(cfg *Config) bool {
+	if cfg.Mode != "managed" {
+		return false
+	}
+	// Check if using cloud config provider
+	if cfg.ConfigProv.Provider == "cloud_snapshot" || cfg.ConfigProv.Provider == "cloud" {
+		return true
+	}
+	// Check if using cloud auth provider
+	if cfg.Auth.Provider == "cloud" {
+		return true
+	}
+	return false
+}
+
 // validate checks that all required configuration fields are present.
 func validate(cfg *Config) error {
-	if cfg.APIKey == "" && len(cfg.APIKeys) == 0 {
-		return fmt.Errorf("api_key or api_keys is required (set via config file or ROUTATIC_PROXY_API_KEY env var; OC_GO_CC_API_KEY is still supported)")
+	// In managed mode with cloud config provider, API keys come from the cloud snapshot
+	// and are not required in the bootstrap config.
+	if !isCloudManagedMode(cfg) {
+		if cfg.APIKey == "" && len(cfg.APIKeys) == 0 {
+			return fmt.Errorf("api_key or api_keys is required (set via config file or ROUTATIC_PROXY_API_KEY env var; OC_GO_CC_API_KEY is still supported)")
+		}
 	}
 
 	if err := validateAPIKeys(cfg.APIKeys); err != nil {
@@ -236,16 +258,20 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	if err := validateModelOverrides(cfg.ModelOverrides); err != nil {
-		return err
-	}
+	// In cloud managed mode, model configuration comes from the cloud snapshot
+	// so local validation can be skipped.
+	if !isCloudManagedMode(cfg) {
+		if err := validateModelOverrides(cfg.ModelOverrides); err != nil {
+			return err
+		}
 
-	if err := validateAnthropicToolsDisabled(cfg); err != nil {
-		return err
-	}
+		if err := validateAnthropicToolsDisabled(cfg); err != nil {
+			return err
+		}
 
-	if err := validateVisionModels(cfg); err != nil {
-		return err
+		if err := validateVisionModels(cfg); err != nil {
+			return err
+		}
 	}
 
 	return nil
