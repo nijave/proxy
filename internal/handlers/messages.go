@@ -1374,7 +1374,7 @@ func (h *MessagesHandler) determineAndSendAuthError(w http.ResponseWriter, err e
 // enforceModelAccessChecks performs all access control checks for the request.
 // This is a placeholder for future RBAC enforcement.
 // TODO: Integrate RuntimeConfig.EnforcementPolicy checks here.
-// nolint:unused // Intentionally unused - will be hooked up in Phase 2
+//lint:ignore U1000 Intentionally unused - will be hooked up in Phase 2
 func (h *MessagesHandler) enforceModelAccessChecks(authCtx *auth.AuthContext, modelID string, requestID string) error {
 	// TODO: When RuntimeConfig integration is complete, check:
 	// - EnforcementPolicy.EnforceModelAllowlist
