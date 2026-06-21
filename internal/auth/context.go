@@ -116,9 +116,18 @@ func (a *AuthContext) Key(key string) string {
 // WithMetadata returns a copy of the AuthContext with the given key-value pair
 // added to metadata.
 func (a *AuthContext) WithMetadata(key, value string) *AuthContext {
+	// Create a copy of the struct.
+	copy := *a
+
+	// Deep copy the metadata map.
 	if a.Metadata == nil {
-		a.Metadata = make(map[string]string)
+		copy.Metadata = make(map[string]string)
+	} else {
+		copy.Metadata = make(map[string]string, len(a.Metadata))
+		for k, v := range a.Metadata {
+			copy.Metadata[k] = v
+		}
 	}
-	a.Metadata[key] = value
-	return a
+	copy.Metadata[key] = value
+	return &copy
 }

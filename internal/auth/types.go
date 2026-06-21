@@ -58,27 +58,27 @@ const (
 type RateLimitPolicy struct {
 	// RequestsPerSecond is the maximum requests allowed per second.
 	// Zero means no limit.
-	RequestsPerSecond int
+	RequestsPerSecond int `json:"requests_per_second,omitempty" yaml:"requests_per_second,omitempty"`
 
 	// RequestsPerMinute is the maximum requests allowed per minute.
 	// Zero means no limit.
-	RequestsPerMinute int
+	RequestsPerMinute int `json:"requests_per_minute,omitempty" yaml:"requests_per_minute,omitempty"`
 
 	// RequestsPerHour is the maximum requests allowed per hour.
 	// Zero means no limit.
-	RequestsPerHour int
+	RequestsPerHour int `json:"requests_per_hour,omitempty" yaml:"requests_per_hour,omitempty"`
 
 	// RequestsPerDay is the maximum requests allowed per day.
 	// Zero means no limit.
-	RequestsPerDay int
+	RequestsPerDay int `json:"requests_per_day,omitempty" yaml:"requests_per_day,omitempty"`
 
 	// TokensPerMinute is the maximum tokens (input + output) allowed per minute.
 	// Zero means no limit.
-	TokensPerMinute int
+	TokensPerMinute int `json:"tokens_per_minute,omitempty" yaml:"tokens_per_minute,omitempty"`
 
 	// BurstSize allows temporary bursts above the rate limit.
 	// Zero means no burst allowed.
-	BurstSize int
+	BurstSize int `json:"burst_size,omitempty" yaml:"burst_size,omitempty"`
 }
 
 // BillingPolicy defines billing-related configuration.

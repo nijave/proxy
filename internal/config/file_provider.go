@@ -33,24 +33,83 @@ type FileConfigProvider struct {
 // FileConfig represents the on-disk configuration file format.
 // It supports both YAML and JSON encoding.
 type FileConfig struct {
-	Version    string                         `json:"version" yaml:"version"`
+	Version    string                       `json:"version" yaml:"version"`
 	Workspaces map[string]WorkspaceConfig   `json:"workspaces" yaml:"workspaces"`
 }
 
 // WorkspaceConfig defines configuration for a single workspace/tenant.
 type WorkspaceConfig struct {
-	Supermodels map[string]SupermodelConfig `json:"supermodels" yaml:"supermodels"`
-	Providers   map[string]ProviderConfig   `json:"providers" yaml:"providers"`
-	Enforcement EnforcementPolicy           `json:"enforcement" yaml:"enforcement"`
-	Logging     LoggingPolicy               `json:"logging" yaml:"logging"`
+	Supermodels map[string]SupermodelFileConfig `json:"supermodels" yaml:"supermodels"`
+	Providers   map[string]ProviderFileConfig  `json:"providers" yaml:"providers"`
+	Enforcement EnforcementFileConfig        `json:"enforcement" yaml:"enforcement"`
+	Logging     LoggingFileConfig              `json:"logging" yaml:"logging"`
 }
 
-// SupermodelConfig represents the file format for supermodel configuration.
-type SupermodelConfig struct {
-	Name        string                            `json:"name" yaml:"name"`
-	Description string                            `json:"description,omitempty" yaml:"description,omitempty"`
-	Default     ModelConfig                       `json:"default" yaml:"default"`
-	Scenarios   map[string]ScenarioConfig `json:"scenarios,omitempty" yaml:"scenarios,omitempty"`
+// SupermodelFileConfig represents the file format for supermodel configuration.
+type SupermodelFileConfig struct {
+	Name        string                         `json:"name" yaml:"name"`
+	Description string                         `json:"description,omitempty" yaml:"description,omitempty"`
+	Default     ModelFileConfig                `json:"default" yaml:"default"`
+	Scenarios   map[string]ScenarioFileConfig  `json:"scenarios,omitempty" yaml:"scenarios,omitempty"`
+}
+
+// ModelFileConfig represents model configuration in file format (with YAML tags).
+type ModelFileConfig struct {
+	Provider        string  `json:"provider" yaml:"provider"`
+	ModelID         string  `json:"model_id" yaml:"model_id"`
+	Temperature     float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+	MaxTokens       int     `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+	MaxOutputTokens int     `json:"max_output_tokens,omitempty" yaml:"max_output_tokens,omitempty"`
+	ContextWindow   int     `json:"context_window,omitempty" yaml:"context_window,omitempty"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
+	SupportsTools   *bool   `json:"supports_tools,omitempty" yaml:"supports_tools,omitempty"`
+	WireFormat      string  `json:"wire_format,omitempty" yaml:"wire_format,omitempty"`
+	Vision          bool    `json:"vision,omitempty" yaml:"vision,omitempty"`
+}
+
+// ScenarioFileConfig represents scenario configuration in file format (with YAML tags).
+type ScenarioFileConfig struct {
+	Provider        string  `json:"provider" yaml:"provider"`
+	ModelID         string  `json:"model_id" yaml:"model_id"`
+	Temperature     float64 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+	MaxTokens       int     `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+	MaxOutputTokens int     `json:"max_output_tokens,omitempty" yaml:"max_output_tokens,omitempty"`
+	ContextWindow   int     `json:"context_window,omitempty" yaml:"context_window,omitempty"`
+	ReasoningEffort string  `json:"reasoning_effort,omitempty" yaml:"reasoning_effort,omitempty"`
+}
+
+// ProviderFileConfig represents provider configuration in file format (with YAML tags).
+type ProviderFileConfig struct {
+	Name             string            `json:"name" yaml:"name"`
+	Type             string            `json:"type" yaml:"type"` // "opencode-go", "opencode-zen", "aws-bedrock", etc.
+	BaseURL          string            `json:"base_url" yaml:"base_url"`
+	AnthropicBaseURL string            `json:"anthropic_base_url,omitempty" yaml:"anthropic_base_url,omitempty"`
+	ResponsesBaseURL string            `json:"responses_base_url,omitempty" yaml:"responses_base_url,omitempty"`
+	GeminiBaseURL    string            `json:"gemini_base_url,omitempty" yaml:"gemini_base_url,omitempty"`
+	APIKey           string            `json:"api_key,omitempty" yaml:"api_key,omitempty"`
+	APIKeys          []string          `json:"api_keys,omitempty" yaml:"api_keys,omitempty"`
+	TimeoutMs        int               `json:"timeout_ms" yaml:"timeout_ms"`
+	StreamTimeoutMs  int               `json:"stream_timeout_ms,omitempty" yaml:"stream_timeout_ms,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
+}
+
+// LoggingFileConfig represents logging policy in file format (with YAML tags).
+type LoggingFileConfig struct {
+	Level            string   `json:"level" yaml:"level"` // "debug", "info", "warn", "error"
+	LogRequests      bool     `json:"log_requests" yaml:"log_requests"`
+	LogResponses     bool     `json:"log_responses" yaml:"log_responses"`
+	LogLatency       bool     `json:"log_latency" yaml:"log_latency"`
+	LogRateLimits    bool     `json:"log_rate_limits" yaml:"log_rate_limits"`
+	PIIMasking       bool     `json:"pii_masking" yaml:"pii_masking"`
+	SensitiveHeaders []string `json:"sensitive_headers,omitempty" yaml:"sensitive_headers,omitempty"`
+}
+
+// EnforcementFileConfig represents enforcement policy in file format (with YAML tags).
+type EnforcementFileConfig struct {
+	RequireAuth           bool `json:"require_auth" yaml:"require_auth"`
+	EnforceModelAllowlist bool `json:"enforce_model_allowlist" yaml:"enforce_model_allowlist"`
+	EnforceBudgets        bool `json:"enforce_budgets" yaml:"enforce_budgets"`
+	EnforceRateLimits     bool `json:"enforce_rate_limits" yaml:"enforce_rate_limits"`
 }
 
 // NewFileConfigProvider creates a new FileConfigProvider that reads from the
@@ -328,6 +387,15 @@ func (p *FileConfigProvider) StopWatching() error {
 func (p *FileConfigProvider) watchLoop() {
 	defer p.wg.Done()
 
+	// Get local reference to watcher - it can be nilled by StopWatching
+	p.mu.RLock()
+	watcher := p.watcher
+	p.mu.RUnlock()
+
+	if watcher == nil {
+		return
+	}
+
 	filename := filepath.Base(p.configPath)
 	debounceTimer := time.NewTimer(0)
 	<-debounceTimer.C // Drain initial timer
@@ -337,7 +405,7 @@ func (p *FileConfigProvider) watchLoop() {
 		case <-p.stopCh:
 			return
 
-		case event, ok := <-p.watcher.Events:
+		case event, ok := <-watcher.Events:
 			if !ok {
 				return
 			}
@@ -361,7 +429,7 @@ func (p *FileConfigProvider) watchLoop() {
 			}
 			debounceTimer.Reset(500 * time.Millisecond)
 
-		case err, ok := <-p.watcher.Errors:
+		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
@@ -458,7 +526,7 @@ func (p *FileConfigProvider) validateWorkspaceConfig(wsID string, wsCfg Workspac
 }
 
 // validateSupermodelConfig validates a single supermodel configuration.
-func (p *FileConfigProvider) validateSupermodelConfig(name string, smCfg SupermodelConfig) error {
+func (p *FileConfigProvider) validateSupermodelConfig(name string, smCfg SupermodelFileConfig) error {
 	if smCfg.Name == "" {
 		return fmt.Errorf("supermodel name is required")
 	}
@@ -485,7 +553,7 @@ func (p *FileConfigProvider) validateSupermodelConfig(name string, smCfg Supermo
 }
 
 // validateProviderConfig validates a single provider configuration.
-func (p *FileConfigProvider) validateProviderConfig(name string, provider ProviderConfig) error {
+func (p *FileConfigProvider) validateProviderConfig(name string, provider ProviderFileConfig) error {
 	if provider.Name == "" {
 		return fmt.Errorf("provider name is required")
 	}
@@ -524,15 +592,15 @@ func (p *FileConfigProvider) compileToRuntime(cfg *FileConfig) (*RuntimeConfig, 
 		supermodels[name] = Supermodel{
 			Name:        smCfg.Name,
 			Description: smCfg.Description,
-			Default:     smCfg.Default,
-			Scenarios:   smCfg.Scenarios,
+			Default:     convertModelFileConfigToModelConfig(smCfg.Default),
+			Scenarios:   convertScenariosMap(smCfg.Scenarios),
 		}
 	}
 
 	// Compile providers
 	providers := make(map[string]ProviderConfig)
 	for name, provCfg := range wsConfig.Providers {
-		providers[name] = provCfg
+		providers[name] = convertProviderFileConfigToProviderConfig(provCfg)
 	}
 
 	// Build capability index from supermodels
@@ -588,9 +656,42 @@ func (p *FileConfigProvider) compileToRuntime(cfg *FileConfig) (*RuntimeConfig, 
 		Providers:       providers,
 		CapabilityIndex: capabilityIndex,
 		RoutingPolicies: routingPolicies,
-		LoggingPolicy:   wsConfig.Logging,
-		Enforcement:     wsConfig.Enforcement,
+		LoggingPolicy:   convertLoggingFileConfigToLoggingPolicy(wsConfig.Logging),
+		Enforcement:     convertEnforcementFileConfigToEnforcementPolicy(wsConfig.Enforcement),
 	}, nil
+}
+
+// convertModelFileConfigToModelConfig converts ModelFileConfig to ModelConfig.
+func convertModelFileConfigToModelConfig(mfc ModelFileConfig) ModelConfig {
+	return ModelConfig{
+		Provider:        mfc.Provider,
+		ModelID:         mfc.ModelID,
+		Temperature:     mfc.Temperature,
+		MaxTokens:       mfc.MaxTokens,
+		MaxOutputTokens: mfc.MaxOutputTokens,
+		ContextWindow:   mfc.ContextWindow,
+		ReasoningEffort: mfc.ReasoningEffort,
+		SupportsTools:   mfc.SupportsTools,
+		WireFormat:      mfc.WireFormat,
+		Vision:          mfc.Vision,
+	}
+}
+
+// convertScenariosMap converts map of ScenarioFileConfig to map of ScenarioConfig.
+func convertScenariosMap(sfc map[string]ScenarioFileConfig) map[string]ScenarioConfig {
+	scenarios := make(map[string]ScenarioConfig)
+	for name, s := range sfc {
+		scenarios[name] = ScenarioConfig{
+			Provider:        s.Provider,
+			ModelID:         s.ModelID,
+			Temperature:     s.Temperature,
+			MaxTokens:       s.MaxTokens,
+			MaxOutputTokens: s.MaxOutputTokens,
+			ContextWindow:   s.ContextWindow,
+			ReasoningEffort: s.ReasoningEffort,
+		}
+	}
+	return scenarios
 }
 
 // inferCapabilities extracts model capabilities from ModelConfig.
@@ -627,4 +728,44 @@ func (p *FileConfigProvider) inferCapabilitiesFromScenario(sc ScenarioConfig) Mo
 // boolPtr returns a pointer to a bool value.
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+// convertProviderFileConfigToProviderConfig converts ProviderFileConfig to ProviderConfig.
+func convertProviderFileConfigToProviderConfig(pfc ProviderFileConfig) ProviderConfig {
+	return ProviderConfig{
+		Name:             pfc.Name,
+		Type:             pfc.Type,
+		BaseURL:          pfc.BaseURL,
+		AnthropicBaseURL: pfc.AnthropicBaseURL,
+		ResponsesBaseURL: pfc.ResponsesBaseURL,
+		GeminiBaseURL:    pfc.GeminiBaseURL,
+		APIKey:           pfc.APIKey,
+		APIKeys:          pfc.APIKeys,
+		TimeoutMs:        pfc.TimeoutMs,
+		StreamTimeoutMs:  pfc.StreamTimeoutMs,
+		Headers:          pfc.Headers,
+	}
+}
+
+// convertLoggingFileConfigToLoggingPolicy converts LoggingFileConfig to LoggingPolicy.
+func convertLoggingFileConfigToLoggingPolicy(lfc LoggingFileConfig) LoggingPolicy {
+	return LoggingPolicy{
+		Level:            lfc.Level,
+		LogRequests:      lfc.LogRequests,
+		LogResponses:     lfc.LogResponses,
+		LogLatency:       lfc.LogLatency,
+		LogRateLimits:    lfc.LogRateLimits,
+		PIIMasking:       lfc.PIIMasking,
+		SensitiveHeaders: lfc.SensitiveHeaders,
+	}
+}
+
+// convertEnforcementFileConfigToEnforcementPolicy converts EnforcementFileConfig to EnforcementPolicy.
+func convertEnforcementFileConfigToEnforcementPolicy(efc EnforcementFileConfig) EnforcementPolicy {
+	return EnforcementPolicy{
+		RequireAuth:           efc.RequireAuth,
+		EnforceModelAllowlist: efc.EnforceModelAllowlist,
+		EnforceBudgets:        efc.EnforceBudgets,
+		EnforceRateLimits:     efc.EnforceRateLimits,
+	}
 }

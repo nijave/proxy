@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/routatic/proxy/internal/auth"
 	"github.com/routatic/proxy/internal/client"
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
@@ -42,6 +43,13 @@ type MessagesHandler struct {
 	requestDedup        *middleware.RequestDeduplicator
 	requestIDGen        *middleware.RequestIDGenerator
 	metrics             *metrics.Metrics
+	// TODO: RuntimeConfig integration with router - router needs updates to accept RuntimeConfig
+	// runtimeConfigHolder stores the effective config during request processing
+	runtimeConfigHolder *config.RuntimeConfig
+	// AuthProvider authenticates incoming requests
+	authProvider auth.AuthProvider
+	// ConfigProvider provides runtime configuration based on authentication
+	configProvider config.ConfigProvider
 }
 
 // responseWriter wraps http.ResponseWriter to track if headers were written.
@@ -118,6 +126,67 @@ func NewMessagesHandler(
 	tokenCounter *token.Counter,
 	metrics *metrics.Metrics,
 ) *MessagesHandler {
+	return NewMessagesHandlerWithProviders(
+		openCodeClient,
+		providerRegistry,
+		modelRouter,
+		fallbackHandler,
+		tokenCounter,
+		metrics,
+		auth.NewStaticAuthProvider(authNoOpContext()),
+		config.NewStaticConfigProvider(nil),
+	)
+}
+
+// authNoOpContext returns a permissive AuthContext for backward compatibility.
+func authNoOpContext() *auth.AuthContext {
+	return &auth.AuthContext{
+		Identity: auth.SubjectIdentity{
+			Type: auth.SubjectTypeService,
+			ID:   "legacy",
+			Name: "Legacy Handler",
+		},
+		WorkspaceID:      "default",
+		KeyID:            "",
+		KeyStatus:        auth.KeyStatusActive,
+		AllowedModels:    nil, // Allow all models
+		AllowedProviders: nil, // Allow all providers
+		Roles:            []string{"admin"},
+		RateLimits: auth.RateLimitPolicy{
+			RequestsPerSecond: 0, // No limit
+			RequestsPerMinute: 0,
+			RequestsPerHour:   0,
+		},
+		Billing: auth.BillingPolicy{
+			Plan:             "unlimited",
+			CreditsRemaining: -1, // Unlimited
+			CreditsConsumed:  0,
+		},
+		ConfigRef: auth.ConfigRef{},
+		Metadata:  nil,
+	}
+}
+
+// NewMessagesHandlerWithProviders creates a new messages handler with auth and config providers.
+// This is the recommended constructor for new deployments.
+func NewMessagesHandlerWithProviders(
+	openCodeClient *client.OpenCodeClient,
+	providerRegistry *core.ProviderRegistry,
+	modelRouter *router.ModelRouter,
+	fallbackHandler *router.FallbackHandler,
+	tokenCounter *token.Counter,
+	metrics *metrics.Metrics,
+	authProvider auth.AuthProvider,
+	configProvider config.ConfigProvider,
+) *MessagesHandler {
+	// Handle nil providers with defaults for backward compatibility during migration
+	if authProvider == nil {
+		authProvider = auth.NewStaticAuthProvider(authNoOpContext())
+	}
+	if configProvider == nil {
+		configProvider = config.NewStaticConfigProvider(nil)
+	}
+
 	return &MessagesHandler{
 		client:              openCodeClient,
 		providerRegistry:    providerRegistry,
@@ -133,6 +202,8 @@ func NewMessagesHandler(
 		requestDedup:        nil,
 		requestIDGen:        middleware.NewRequestIDGenerator(),
 		metrics:             metrics,
+		authProvider:        authProvider,
+		configProvider:      configProvider,
 	}
 }
 
@@ -142,6 +213,8 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	ctx := r.Context()
 
 	// Generate or get request ID for correlation.
 	// Cap externally-provided IDs at 256 bytes to prevent header abuse.
@@ -154,7 +227,15 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("X-Request-ID", requestID)
 
-	// Rate limiting
+	// Step 1: Authenticate the request
+	authCtx, err := h.authenticateRequest(ctx, r, requestID)
+	if err != nil {
+		// authenticateRequest already sends appropriate error response
+		return
+	}
+
+	// Step 2: Check Rate Limits (if token-based limiting enabled)
+	// TODO: Integrate with authCtx.RateLimits for per-subject rate limiting
 	clientIP := middleware.GetClientIP(r)
 	if !h.rateLimiter.Allow(clientIP) {
 		h.metrics.RecordRateLimited()
@@ -162,6 +243,25 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "rate limited", http.StatusTooManyRequests)
 		return
 	}
+
+	// Step 3: Get Effective Config
+	runtimeConfig, err := h.configProvider.GetEffectiveConfig(ctx, authCtx)
+	if err != nil {
+		h.logger.Error("failed to get effective config",
+			"error", err,
+			"request_id", requestID,
+			"workspace_id", authCtx.WorkspaceID,
+		)
+		h.sendError(w, http.StatusServiceUnavailable, "configuration unavailable", err)
+		return
+	}
+
+	// TODO: Pass RuntimeConfig to router for dynamic routing based on config
+	// The RuntimeConfig contains Supermodels, Providers, RoutingPolicies, etc.
+	// The router needs to be updated to accept RuntimeConfig for scenario detection
+	// and model selection. For now, we store it but don't pass it to preserve
+	// backward compatibility.
+	h.runtimeConfigHolder = runtimeConfig
 
 	// Read the raw request body with a size limit to prevent memory exhaustion.
 	const maxBodySize = 104857600 // 100 MB
@@ -197,6 +297,18 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 	// Validate request
 	if err := anthropicReq.Validate(); err != nil {
 		h.sendError(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// Enforce model allowlist from auth context
+	if err := h.enforceModelAccess(authCtx, anthropicReq.Model); err != nil {
+		h.logger.Warn("model access denied",
+			"model", anthropicReq.Model,
+			"workspace_id", authCtx.WorkspaceID,
+			"request_id", requestID,
+			"error", err,
+		)
+		h.sendError(w, http.StatusForbidden, "model not allowed for this subject", err)
 		return
 	}
 
