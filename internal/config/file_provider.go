@@ -730,19 +730,7 @@ func (p *FileConfigProvider) inferCapabilitiesFromScenario(sc ScenarioConfig) Mo
 
 // convertProviderFileConfigToProviderConfig converts ProviderFileConfig to ProviderConfig.
 func convertProviderFileConfigToProviderConfig(pfc ProviderFileConfig) ProviderConfig {
-	return ProviderConfig{
-		Name:             pfc.Name,
-		Type:             pfc.Type,
-		BaseURL:          pfc.BaseURL,
-		AnthropicBaseURL: pfc.AnthropicBaseURL,
-		ResponsesBaseURL: pfc.ResponsesBaseURL,
-		GeminiBaseURL:    pfc.GeminiBaseURL,
-		APIKey:           pfc.APIKey,
-		APIKeys:          pfc.APIKeys,
-		TimeoutMs:        pfc.TimeoutMs,
-		StreamTimeoutMs:  pfc.StreamTimeoutMs,
-		Headers:          pfc.Headers,
-	}
+	return ProviderConfig(pfc)
 }
 
 // convertLoggingFileConfigToLoggingPolicy converts LoggingFileConfig to LoggingPolicy.
