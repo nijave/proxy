@@ -20,14 +20,20 @@ import (
 )
 
 const (
-	defaultPort           = 3456
-	defaultCloudBaseURL   = "https://api.routatic.cloud"
+	defaultPort         = 3456
+	defaultCloudBaseURL = "https://api.routatic.cloud"
 	authIntrospectionPath = "/v1/auth/introspect"
 	configSnapshotPath    = "/v1/config/snapshot"
 	metricsEndpointPath   = "/v1/metrics/ingest"
-	defaultRequestTimeout = 300 * time.Second
-	defaultStreamTimeout  = 600 * time.Second
-	defaultCloudTimeout   = 30 * time.Second
+	defaultCloudTimeout = 30 * time.Second
+)
+
+// contextKey is a typed key for context values to avoid collisions
+type contextKey string
+
+//nolint:gosec // These are context keys, not credentials
+const (
+	workspaceContextKey contextKey = "workspace_id"
 )
 
 // HostedConfig holds the minimal configuration for hosted mode.
@@ -115,7 +121,7 @@ func (p *CloudAuthProvider) ValidateAPIKey(ctx context.Context, apiKey string) (
 	if err != nil {
 		return nil, fmt.Errorf("calling auth endpoint: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -189,7 +195,7 @@ func (p *cloudConfigRawProvider) GetEffectiveConfig(ctx context.Context, authCtx
 	if err != nil {
 		return nil, fmt.Errorf("fetching config: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -212,6 +218,13 @@ func (p *cloudConfigRawProvider) Invalidate(ctx context.Context, workspaceID, ve
 	return nil // Cloud provider manages its own caching
 }
 
+// HealthCheck checks cloud connectivity via the cached provider's underlying raw provider
+func (p *CloudConfigProvider) HealthCheck(ctx context.Context) error {
+	// Try to get effective config as health check
+	_, err := p.cache.GetEffectiveConfig(ctx, nil)
+	return err
+}
+
 func (p *cloudConfigRawProvider) HealthCheck(ctx context.Context) error {
 	url := p.baseURL + configSnapshotPath
 
@@ -226,7 +239,7 @@ func (p *cloudConfigRawProvider) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("health check returned status %d", resp.StatusCode)
@@ -272,7 +285,7 @@ func (r *MetricsReporter) ReportRequest(ctx context.Context, req MetricsRequest)
 	if err != nil {
 		return fmt.Errorf("sending metrics: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("metrics endpoint returned status %d", resp.StatusCode)
@@ -369,10 +382,12 @@ func (s *HostedServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "ok",
 		"mode":   "hosted",
-	})
+	}); err != nil {
+		slog.Error("failed to encode health response", "error", err)
+	}
 }
 
 // handleProxy authenticates and proxies requests
@@ -404,7 +419,7 @@ func (s *HostedServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store workspace in context for config provider
-	ctx = context.WithValue(ctx, "workspace_id", authResp.WorkspaceID)
+	ctx = context.WithValue(ctx, workspaceContextKey, authResp.WorkspaceID)
 
 	// Fetch config for this workspace
 	runtimeConfig, err := s.configProvider.cache.GetEffectiveConfig(ctx, nil)
@@ -440,11 +455,13 @@ func (s *HostedServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// For now, return a stub response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status":    "ok",
 		"workspace": authResp.WorkspaceID,
 		"message":   "proxy endpoint - integrate with existing handlers",
-	})
+	}); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
 }
 
 // parseLogLevel parses a log level string
