@@ -102,18 +102,29 @@ type AuthResponse struct {
 	Role        string `json:"role"`
 }
 
+// IntrospectionRequest represents the request body for auth introspection
+type IntrospectionRequest struct {
+	APIKey string `json:"apiKey"`
+}
+
 // ValidateAPIKey validates an API key with the cloud service
 func (p *CloudAuthProvider) ValidateAPIKey(ctx context.Context, apiKey string) (*AuthResponse, error) {
 	url := p.baseURL + authIntrospectionPath
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	// Build request body with API key
+	introspectReq := IntrospectionRequest{APIKey: apiKey}
+	body, err := json.Marshal(introspectReq)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+p.serviceToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
