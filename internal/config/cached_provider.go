@@ -198,22 +198,24 @@ func (p *CachedConfigProvider) fetchAndCache(
 ) (*RuntimeConfig, error) {
 	// Double-check pattern: check again after acquiring write lock
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	// Another goroutine may have fetched while we waited for lock
 	if entry, exists := p.cache[key]; exists && !p.isExpired(entry) {
 		p.recordHitLocked(key)
+		p.mu.Unlock()
 		return entry.config, nil
 	}
+	p.mu.Unlock()
 
 	// Fetch from underlying provider (outside lock to allow concurrent fetches of different keys)
-	p.mu.Unlock()
 	config, err := fetchFn(ctx)
-	p.mu.Lock()
-
 	if err != nil {
 		return nil, err
 	}
+
+	// Re-acquire lock to store in cache
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	// Apply LRU eviction if at capacity
 	if p.maxSize > 0 && len(p.cache) >= p.maxSize {

@@ -25,6 +25,12 @@ const (
 	defaultZenAnthropicBaseURL = "https://opencode.ai/zen/v1/messages"
 	defaultZenResponsesBaseURL = "https://opencode.ai/zen/v1/responses"
 	defaultZenGeminiBaseURL    = "https://opencode.ai/zen/v1/models"
+
+	// Default cloud endpoints for Routatic Cloud.
+	// These can be overridden via ROUTATIC_CLOUD_BASE_URL environment variable.
+	defaultRoutaticCloudBaseURL          = "https://api.routatic.cloud"
+	defaultRoutaticAuthIntrospectionPath = "/v1/auth/introspect"
+	defaultRoutaticConfigSnapshotPath    = "/v1/config/snapshot"
 )
 
 // envVarPattern matches ${ENV_VAR} placeholders in config values.
@@ -172,8 +178,18 @@ func applyEnvOverrides(cfg *Config) {
 	if v := envValue("ROUTATIC_PROXY_AUTH_PROVIDER"); v != "" {
 		cfg.Auth.Provider = v
 	}
+
+	// Support ROUTATIC_CLOUD_BASE_URL for setting both introspection and snapshot URLs at once
+	cloudBaseURL := envValue("ROUTATIC_CLOUD_BASE_URL")
+	if cloudBaseURL == "" {
+		cloudBaseURL = defaultRoutaticCloudBaseURL
+	}
+
 	if v := envValue("ROUTATIC_PROXY_AUTH_INTROSPECTION_URL"); v != "" {
 		cfg.Auth.IntrospectionURL = v
+	}
+	if cfg.Auth.IntrospectionURL == "" && cfg.Mode == "managed" {
+		cfg.Auth.IntrospectionURL = cloudBaseURL + defaultRoutaticAuthIntrospectionPath
 	}
 	if v := envValue("ROUTATIC_PROXY_AUTH_CACHE_TTL"); v != "" {
 		if ttl, err := time.ParseDuration(v); err == nil {
@@ -185,6 +201,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := envValue("ROUTATIC_PROXY_CONFIG_SNAPSHOT_URL"); v != "" {
 		cfg.ConfigProv.SnapshotURL = v
+	}
+	if cfg.ConfigProv.SnapshotURL == "" && cfg.Mode == "managed" {
+		cfg.ConfigProv.SnapshotURL = cloudBaseURL + defaultRoutaticConfigSnapshotPath
 	}
 	if v := envValue("ROUTATIC_PROXY_CONFIG_CACHE_TTL"); v != "" {
 		if ttl, err := time.ParseDuration(v); err == nil {
