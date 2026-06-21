@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	defaultPort         = 3456
-	defaultCloudBaseURL = "https://api.routatic.cloud"
+	defaultPort           = 3456
+	defaultCloudBaseURL   = "https://api.routatic.cloud"
 	authIntrospectionPath = "/v1/auth/introspect"
 	configSnapshotPath    = "/v1/config/snapshot"
 	metricsEndpointPath   = "/v1/metrics/ingest"
-	defaultCloudTimeout = 30 * time.Second
+	defaultCloudTimeout   = 30 * time.Second
 )
 
 // contextKey is a typed key for context values to avoid collisions
