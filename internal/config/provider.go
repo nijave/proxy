@@ -80,10 +80,14 @@ func NewStaticConfigProviderWithWorkspaces(configs map[string]*RuntimeConfig) *S
 // GetEffectiveConfig returns the runtime configuration for the authenticated request.
 // For StaticConfigProvider, it returns the configured config based on workspaceID,
 // falling back to "default" or the first available config.
+// Safe for concurrent use.
 func (p *StaticConfigProvider) GetEffectiveConfig(ctx context.Context, authCtx *auth.AuthContext) (*RuntimeConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	// Determine workspace ID
 	workspaceID := ""
@@ -118,10 +122,14 @@ func (p *StaticConfigProvider) GetEffectiveConfig(ctx context.Context, authCtx *
 
 // GetConfigByRef retrieves a specific configuration version by reference.
 // For StaticConfigProvider, this ignores the ref and returns the effective config.
+// Safe for concurrent use.
 func (p *StaticConfigProvider) GetConfigByRef(ctx context.Context, ref auth.ConfigRef) (*RuntimeConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	// Use ref.WorkspaceID to look up config
 	workspaceID := ref.WorkspaceID
@@ -135,7 +143,13 @@ func (p *StaticConfigProvider) GetConfigByRef(ctx context.Context, ref auth.Conf
 	}
 
 	// Fall back to any available config
-	return p.GetEffectiveConfig(ctx, &auth.AuthContext{WorkspaceID: workspaceID})
+	for _, cfg := range p.config {
+		if cfg != nil {
+			return cfg, nil
+		}
+	}
+
+	return nil, ErrConfigNotLoaded
 }
 
 // Invalidate is a no-op for StaticConfigProvider since the config is fixed.
@@ -148,10 +162,14 @@ func (p *StaticConfigProvider) Invalidate(ctx context.Context, workspaceID strin
 }
 
 // HealthCheck verifies the provider has a valid configuration loaded.
+// Safe for concurrent use.
 func (p *StaticConfigProvider) HealthCheck(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	// Check if we have any valid config
 	for _, cfg := range p.config {
