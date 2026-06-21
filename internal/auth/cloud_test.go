@@ -758,9 +758,12 @@ func TestCloudAuthProvider_NewCloudAuthProviderWithClient(t *testing.T) {
 
 // TestCloudAuthProvider_BackgroundRefresh tests background refresh behavior
 func TestCloudAuthProvider_BackgroundRefresh(t *testing.T) {
+	var callCountMu sync.Mutex
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCountMu.Lock()
 		callCount++
+		callCountMu.Unlock()
 		response := IntrospectionResponse{
 			Active:      true,
 			KeyID:       "key_refresh",
@@ -803,8 +806,11 @@ func TestCloudAuthProvider_BackgroundRefresh(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Should have 2 calls now (initial + background refresh)
-	if callCount < 1 {
-		t.Errorf("expected at least 1 call, got %d", callCount)
+	callCountMu.Lock()
+	finalCount := callCount
+	callCountMu.Unlock()
+	if finalCount < 1 {
+		t.Errorf("expected at least 1 call, got %d", finalCount)
 	}
 }
 

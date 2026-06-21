@@ -113,9 +113,12 @@ func NewDBConfigProvider(driver, dsn string) (*DBConfigProvider, error) {
 }
 
 // GetEffectiveConfig returns the runtime configuration for the authenticated request.
-// Delegates to the underlying CachedConfigProvider.
+// Delegates to the underlying CachedConfigProvider using GetConfigByRef.
 func (p *DBConfigProvider) GetEffectiveConfig(ctx context.Context, authCtx *auth.AuthContext) (*RuntimeConfig, error) {
-	return p.cache.GetEffectiveConfig(ctx, authCtx)
+	if authCtx == nil {
+		return nil, fmt.Errorf("auth context is required")
+	}
+	return p.cache.GetConfigByRef(ctx, authCtx.ConfigRef)
 }
 
 // GetConfigByRef retrieves a specific configuration version by reference.
@@ -421,10 +424,6 @@ func inferCapabilitiesFromScenario(sc ScenarioConfig) ModelCapabilities {
 		SupportsThinking:  sc.ReasoningEffort != "",
 		WireFormats:       []string{"openai", "anthropic"},
 	}
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }
 
 // maskDSN masks sensitive parts of the DSN for logging.

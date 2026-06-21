@@ -134,8 +134,64 @@ func NewMessagesHandler(
 		tokenCounter,
 		metrics,
 		auth.NewStaticAuthProvider(authNoOpContext()),
-		config.NewStaticConfigProvider(nil),
+		config.NewStaticConfigProvider(createDefaultRuntimeConfig()),
 	)
+}
+
+// createDefaultRuntimeConfig creates a default RuntimeConfig for backward compatibility.
+// This is used when no explicit config provider is given.
+func createDefaultRuntimeConfig() *config.RuntimeConfig {
+	return &config.RuntimeConfig{
+		WorkspaceID: "default",
+		Version:     "1.0.0",
+		Supermodels: map[string]config.Supermodel{
+			"default": {
+				Name: "default",
+				Default: config.ModelConfig{
+					Provider: "opencode-go",
+					ModelID:  "kimi-k2.6",
+				},
+			},
+		},
+		Providers: map[string]config.ProviderConfig{
+			"opencode-go": {
+				Name: "opencode-go",
+				Type: "opencode-go",
+			},
+		},
+		RoutingPolicies: []config.RoutingPolicy{
+			{
+				Name:     "default",
+				Priority: 0,
+				Conditions: config.RoutingConditions{
+					Streaming: nil,
+				},
+			},
+		},
+		CapabilityIndex: map[string]config.ModelCapabilities{
+			"kimi-k2.6": {
+				ModelID:           "kimi-k2.6",
+				Provider:          "opencode-go",
+				SupportsTools:     true,
+				SupportsStreaming: true,
+			},
+		},
+		LoggingPolicy: config.LoggingPolicy{
+			Level:            "info",
+			LogRequests:      false,
+			LogResponses:     false,
+			LogLatency:       true,
+			LogRateLimits:    false,
+			PIIMasking:       true,
+			SensitiveHeaders: []string{"Authorization", "X-Api-Key"},
+		},
+		Enforcement: config.EnforcementPolicy{
+			RequireAuth:           false,
+			EnforceModelAllowlist: false,
+			EnforceBudgets:        false,
+			EnforceRateLimits:     false,
+		},
+	}
 }
 
 // authNoOpContext returns a permissive AuthContext for backward compatibility.

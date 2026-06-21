@@ -725,11 +725,6 @@ func (p *FileConfigProvider) inferCapabilitiesFromScenario(sc ScenarioConfig) Mo
 	}
 }
 
-// boolPtr returns a pointer to a bool value.
-func boolPtr(v bool) *bool {
-	return &v
-}
-
 // convertProviderFileConfigToProviderConfig converts ProviderFileConfig to ProviderConfig.
 func convertProviderFileConfigToProviderConfig(pfc ProviderFileConfig) ProviderConfig {
 	return ProviderConfig{
@@ -768,4 +763,9 @@ func convertEnforcementFileConfigToEnforcementPolicy(efc EnforcementFileConfig) 
 		EnforceBudgets:        efc.EnforceBudgets,
 		EnforceRateLimits:     efc.EnforceRateLimits,
 	}
+}
+
+// boolPtr returns a pointer to a bool value.
+func boolPtr(v bool) *bool {
+	return &v
 }

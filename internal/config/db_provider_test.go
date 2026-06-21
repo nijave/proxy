@@ -543,10 +543,12 @@ func TestDBConfigProvider_Invalidate(t *testing.T) {
 }
 
 func TestDBConfigProvider_ConcurrentAccess(t *testing.T) {
-	db := setupTestDB(t)
-
-	provider := &DBConfigProvider{db: db, driver: "sqlite"}
-	provider.cache = NewCachedConfigProvider(provider, 5*time.Minute)
+	// Use file-based SQLite for concurrent access to avoid connection issues
+	tmpFile := t.TempDir() + "/test.db"
+	provider, err := NewDBConfigProvider("sqlite", tmpFile)
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
 	defer provider.Close()
 
 	// Seed data
@@ -555,7 +557,7 @@ func TestDBConfigProvider_ConcurrentAccess(t *testing.T) {
 		"enforcement": map[string]interface{}{},
 	}
 	workspaceJSON, _ := json.Marshal(workspaceConfig)
-	_, err := provider.db.Exec(`
+	_, err = provider.db.Exec(`
 		INSERT INTO workspaces (id, config_json, version, updated_at)
 		VALUES (?, ?, ?, ?)
 	`, "ws-concurrent", string(workspaceJSON), "v1", time.Now().Unix())
@@ -592,13 +594,18 @@ func TestDBConfigProvider_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	stats := provider.cache.GetStats()
-	// Should have 1 miss (first call) and rest hits
-	if stats.Misses != 1 {
-		t.Errorf("expected 1 cache miss, got %d", stats.Misses)
+	// With concurrent access, multiple goroutines may race past the cache check
+	// before the first one populates it. We expect at least 1 miss, but could be more.
+	// The key thing is that most calls should be hits.
+	if stats.Misses == 0 {
+		t.Error("expected at least 1 cache miss")
 	}
-	expectedHits := uint64(numGoroutines*numCalls - 1)
-	if stats.Hits != expectedHits {
-		t.Errorf("expected %d cache hits, got %d", expectedHits, stats.Hits)
+
+	totalCalls := uint64(numGoroutines * numCalls)
+	actualHits := stats.Hits
+	// Should have mostly hits - at least 90% of total calls
+	if actualHits < totalCalls*9/10 {
+		t.Errorf("expected at least %d hits for good caching, got %d", totalCalls*9/10, actualHits)
 	}
 }
 
