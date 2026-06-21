@@ -102,6 +102,12 @@ type IntrospectionRequest struct {
 
 // ValidateAPIKey validates an API key with the cloud service
 func (p *CloudAuthProvider) ValidateAPIKey(ctx context.Context, apiKey string) (*AuthResponse, error) {
+	// Trim whitespace and validate non-empty
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, auth.ErrAuthenticationFailed
+	}
+
 	url := p.baseURL + authIntrospectionPath
 
 	// Build request body with API key
@@ -169,8 +175,8 @@ func NewCloudConfigProvider(baseURL, serviceToken string) *CloudConfigProvider {
 	}
 }
 
-// HealthCheck is a no-op for hosted mode - health checking is handled externally.
-// The underlying raw provider implements the actual interface method.
+// HealthCheck delegates to the cached provider.
+// Required to satisfy ConfigProvider interface.
 func (p *CloudConfigProvider) HealthCheck(ctx context.Context) error {
 	return p.cache.HealthCheck(ctx)
 }
@@ -264,8 +270,8 @@ func (p *cloudConfigRawProvider) Invalidate(ctx context.Context, workspaceID, ve
 	return nil // Cloud provider manages its own caching
 }
 
-// HealthCheck is a no-op for hosted mode - health checking is handled externally.
-// Required to satisfy ConfigProvider interface.
+// HealthCheck is required to satisfy the ConfigProvider interface.
+// In hosted mode, health checking is handled externally (e.g., Railway's TCP checks).
 func (p *cloudConfigRawProvider) HealthCheck(ctx context.Context) error {
 	return nil
 }
