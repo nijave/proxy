@@ -499,7 +499,8 @@ func (p *FileConfigProvider) validateFileConfig(cfg *FileConfig) error {
 }
 
 // validateWorkspaceConfig validates a single workspace configuration.
-func (p *FileConfigProvider) validateWorkspaceConfig(wsID string, wsCfg WorkspaceConfig) error {
+func (p *FileConfigProvider) validateWorkspaceConfig(_wsID string, wsCfg WorkspaceConfig) error {
+	_ = _wsID // may be used for error messages in future
 	if len(wsCfg.Supermodels) == 0 {
 		return fmt.Errorf("at least one supermodel is required")
 	}

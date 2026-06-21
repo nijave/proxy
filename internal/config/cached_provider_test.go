@@ -85,12 +85,6 @@ func (m *mockConfigProvider) getCallCount() int {
 	return m.callCount
 }
 
-func (m *mockConfigProvider) setConfig(key string, cfg *RuntimeConfig) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.configs[key] = cfg
-}
-
 func TestNewCachedConfigProvider(t *testing.T) {
 	mock := newMockConfigProvider()
 	provider := NewCachedConfigProvider(mock, 5*time.Minute)
