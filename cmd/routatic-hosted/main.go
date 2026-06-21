@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/routatic/proxy/internal/auth"
@@ -26,14 +27,6 @@ const (
 	configSnapshotPath    = "/v1/config/snapshot"
 	metricsEndpointPath   = "/v1/metrics/ingest"
 	defaultCloudTimeout   = 30 * time.Second
-)
-
-// contextKey is a typed key for context values to avoid collisions
-type contextKey string
-
-//nolint:gosec // These are context keys, not credentials
-const (
-	workspaceContextKey contextKey = "workspace_id"
 )
 
 // HostedConfig holds the minimal configuration for hosted mode.
@@ -396,21 +389,27 @@ func (s *HostedServer) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-// handleProxy authenticates and proxies requests
+// handleProxy authenticates and proxies requests to the upstream
 func (s *HostedServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	start := time.Now()
 
+	// Only accept POST requests
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	// Extract API key from Authorization header
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
-		http.Error(w, "missing authorization", http.StatusUnauthorized)
+		sendError(w, http.StatusUnauthorized, "missing authorization header", nil)
 		return
 	}
 
 	// Extract Bearer token
 	var apiKey string
-	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+	if len(authHeader) > 7 && strings.HasPrefix(authHeader, "Bearer ") {
 		apiKey = authHeader[7:]
 	} else {
 		apiKey = authHeader
@@ -420,54 +419,144 @@ func (s *HostedServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	authResp, err := s.authProvider.ValidateAPIKey(ctx, apiKey)
 	if err != nil {
 		slog.Error("auth validation failed", "error", err)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		sendError(w, http.StatusUnauthorized, "unauthorized", err)
 		return
 	}
 
-	// Store workspace in context for config provider
-	ctx = context.WithValue(ctx, workspaceContextKey, authResp.WorkspaceID)
+	// Create AuthContext for the request
+	authCtx := &auth.AuthContext{
+		Identity: auth.SubjectIdentity{
+			Type: auth.SubjectTypeService,
+			ID:   authResp.KeyID,
+			Name: authResp.Role,
+		},
+		WorkspaceID:      authResp.WorkspaceID,
+		KeyID:            authResp.KeyID,
+		KeyStatus:        auth.KeyStatusActive,
+		AllowedModels:    nil, // Allow all models (cloud controls this)
+		AllowedProviders: nil,
+		Roles:            []string{authResp.Role},
+		RateLimits: auth.RateLimitPolicy{
+			RequestsPerMinute: 1000, // Default limit
+		},
+		Billing: auth.BillingPolicy{
+			Plan:             "hosted",
+			CreditsRemaining: -1, // Unlimited in hosted mode
+		},
+	}
 
 	// Fetch config for this workspace
-	runtimeConfig, err := s.configProvider.cache.GetEffectiveConfig(ctx, nil)
+	runtimeConfig, err := s.configProvider.cache.GetEffectiveConfig(ctx, authCtx)
 	if err != nil {
 		slog.Error("config fetch failed", "error", err)
-		http.Error(w, "configuration error", http.StatusInternalServerError)
+		sendError(w, http.StatusInternalServerError, "configuration unavailable", err)
 		return
 	}
 
-	// TODO: Proxy the request using the runtime configuration
-	// This would integrate with the existing proxy handlers
 	slog.Info("request authenticated",
 		"workspace", authResp.WorkspaceID,
 		"key_id", authResp.KeyID,
 		"config_version", runtimeConfig.Version,
 	)
 
-	// Report metrics after request completes
-	defer func() {
-		duration := time.Since(start).Milliseconds()
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		sendError(w, http.StatusBadRequest, "failed to read request body", err)
+		return
+	}
+	defer func() { _ = r.Body.Close() }()
+
+	// Determine target URL from runtime config
+	// For now, use the first provider's base URL
+	var targetURL string
+	for _, provider := range runtimeConfig.Providers {
+		if provider.Type == "opencode-go" || provider.Type == "opencode-zen" {
+			targetURL = s.cfg.CloudBaseURL + "/v1/chat/completions"
+			break
+		}
+	}
+	if targetURL == "" {
+		targetURL = s.cfg.CloudBaseURL + "/v1/chat/completions"
+	}
+
+	// Create upstream request
+	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		sendError(w, http.StatusInternalServerError, "failed to create upstream request", err)
+		return
+	}
+
+	// Copy headers
+	upReq.Header.Set("Content-Type", "application/json")
+	upReq.Header.Set("Authorization", "Bearer "+s.cfg.ServiceToken)
+	upReq.Header.Set("X-Workspace-Id", authResp.WorkspaceID)
+
+	// Perform the request
+	client := &http.Client{Timeout: 300 * time.Second}
+	upResp, err := client.Do(upReq)
+	if err != nil {
+		slog.Error("upstream request failed", "error", err)
+		sendError(w, http.StatusBadGateway, "upstream request failed", err)
+		return
+	}
+	defer func() { _ = upResp.Body.Close() }()
+
+	// Copy response headers
+	for key, values := range upResp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(upResp.StatusCode)
+
+	// Copy response body
+	respBody, err := io.ReadAll(upResp.Body)
+	if err != nil {
+		slog.Error("failed to read upstream response", "error", err)
+		return
+	}
+
+	if _, err := w.Write(respBody); err != nil {
+		slog.Error("failed to write response", "error", err)
+		return
+	}
+
+	// Report metrics in background
+	duration := time.Since(start).Milliseconds()
+	go func() {
 		metrics := MetricsRequest{
-			WorkspaceID: authResp.WorkspaceID,
-			KeyID:       authResp.KeyID,
-			DurationMs:  duration,
-			Timestamp:   time.Now(),
+			WorkspaceID:  authResp.WorkspaceID,
+			KeyID:        authResp.KeyID,
+			DurationMs:   duration,
+			Status:       "completed",
+			Timestamp:    time.Now(),
+			TokensInput:  0, // TODO: Parse from request/response
+			TokensOutput: 0,
 		}
 
 		if err := s.metricsReporter.ReportRequest(context.Background(), metrics); err != nil {
 			slog.Error("failed to report metrics", "error", err)
 		}
 	}()
+}
 
-	// For now, return a stub response
+// sendError sends an error response in Anthropic format
+func sendError(w http.ResponseWriter, statusCode int, message string, err error) {
+	slog.Error("request error", "status", statusCode, "message", message, "error", err)
+
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status":    "ok",
-		"workspace": authResp.WorkspaceID,
-		"message":   "proxy endpoint - integrate with existing handlers",
-	}); err != nil {
-		slog.Error("failed to encode response", "error", err)
+	w.WriteHeader(statusCode)
+
+	errorResp := map[string]interface{}{
+		"type": "error",
+		"error": map[string]string{
+			"type":    "api_error",
+			"message": message,
+		},
 	}
+	_ = json.NewEncoder(w).Encode(errorResp)
 }
 
 // parseLogLevel parses a log level string
