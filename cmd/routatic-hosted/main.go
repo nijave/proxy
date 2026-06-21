@@ -210,8 +210,46 @@ func (p *cloudConfigRawProvider) GetEffectiveConfig(ctx context.Context, authCtx
 	return &runtimeConfig, nil
 }
 
+// GetConfigByRef fetches configuration by specific workspace reference.
+// Uses ref.WorkspaceID if provided, otherwise delegates to GetEffectiveConfig behavior.
 func (p *cloudConfigRawProvider) GetConfigByRef(ctx context.Context, ref config.ConfigRef) (*config.RuntimeConfig, error) {
-	return p.GetEffectiveConfig(ctx, nil)
+	// Use workspace from ref if provided, otherwise default
+	workspaceID := ref.WorkspaceID
+	if workspaceID == "" {
+		workspaceID = "default"
+	}
+
+	// Build URL with optional version query param for cache validation
+	url := p.baseURL + configSnapshotPath + "?workspace=" + workspaceID
+	if ref.Version != "" {
+		url += "&version=" + ref.Version
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+p.serviceToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching config: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("config fetch failed: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var runtimeConfig config.RuntimeConfig
+	if err := json.NewDecoder(resp.Body).Decode(&runtimeConfig); err != nil {
+		return nil, fmt.Errorf("decoding config: %w", err)
+	}
+
+	return &runtimeConfig, nil
 }
 
 func (p *cloudConfigRawProvider) Invalidate(ctx context.Context, workspaceID, version string) error {
