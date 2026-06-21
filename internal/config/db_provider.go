@@ -115,6 +115,9 @@ func NewDBConfigProvider(driver, dsn string) (*DBConfigProvider, error) {
 // GetEffectiveConfig returns the runtime configuration for the authenticated request.
 // Delegates to the underlying CachedConfigProvider using GetConfigByRef.
 func (p *DBConfigProvider) GetEffectiveConfig(ctx context.Context, authCtx *auth.AuthContext) (*RuntimeConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if authCtx == nil {
 		return nil, fmt.Errorf("auth context is required")
 	}
