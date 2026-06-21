@@ -112,19 +112,9 @@ func (s *StaticAuthProvider) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-// NoAuthProvider returns a permissive AuthContext for unauthenticated requests.
-// This is useful for local development and testing.
-func NoAuthProvider() AuthProvider {
-	return NewStaticAuthProvider(&AuthContext{
-		Identity: SubjectIdentity{
-			Type: SubjectTypeLocal,
-			ID:   "local",
-			Name: "Local Development",
-		},
-		KeyStatus:   KeyStatusActive,
-		AllowedModels:    []string{}, // Empty = allow all
-		AllowedProviders: []string{}, // Empty = allow all
-		Roles:       []string{"admin"},
-		Metadata:    make(map[string]string),
-	})
+// NewNoAuthProviderFunc returns a permissive AuthContext for unauthenticated requests.
+// This is a convenience function that wraps NewNoAuthProvider for simple use cases.
+// For more control, use NewNoAuthProvider directly.
+func NewNoAuthProviderFunc(workspaceID string) AuthProvider {
+	return NewNoAuthProvider(workspaceID)
 }
