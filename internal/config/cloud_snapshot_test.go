@@ -44,7 +44,7 @@ func TestNewCloudSnapshotConfigProvider(t *testing.T) {
 // TestCloudSnapshotConfigProvider_GetEffectiveConfig_Success tests basic successful fetch and caching.
 func TestCloudSnapshotConfigProvider_GetEffectiveConfig_Success(t *testing.T) {
 	callCount := 0
-	 expectedWorkspace := "ws_123"
+	expectedWorkspace := "ws_123"
 	expectedVersion := "v1.2.3"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,11 +120,11 @@ func TestCloudSnapshotConfigProvider_GetEffectiveConfig_WrappedResponse(t *testi
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Return wrapped response
 		response := map[string]interface{}{
-			"version":     "v1.2.3",
+			"version":      "v1.2.3",
 			"workspace_id": "ws_456",
 			"config": map[string]interface{}{
 				"workspace_id": "ws_456",
-				"version":     "v1.2.3",
+				"version":      "v1.2.3",
 				"supermodels": map[string]interface{}{
 					"default": map[string]interface{}{
 						"name": "wrapped-model",

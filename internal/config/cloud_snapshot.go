@@ -26,7 +26,7 @@ type CloudSnapshotConfigProvider struct {
 	snapshotURL  string
 	ttl          time.Duration
 	mu           sync.RWMutex
-	snapshots    map[string]cachedSnapshot // key: workspaceID:version
+	snapshots    map[string]cachedSnapshot   // key: workspaceID:version
 	inFlight     map[string]*inFlightRequest // key -> request in progress
 	httpClient   *http.Client
 	serviceToken string
@@ -34,11 +34,11 @@ type CloudSnapshotConfigProvider struct {
 
 // inFlightRequest tracks pending fetches for deduplication.
 type inFlightRequest struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	done    bool
-	config  *RuntimeConfig
-	err     error
+	mu     sync.Mutex
+	cond   *sync.Cond
+	done   bool
+	config *RuntimeConfig
+	err    error
 }
 
 // snapshotResponse represents the JSON structure returned by the cloud snapshot API.

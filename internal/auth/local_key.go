@@ -194,8 +194,8 @@ func (p *LocalKeyAuthProvider) Authenticate(ctx context.Context, req *http.Reque
 		Roles:            key.Roles,
 		RateLimits:       key.RateLimits,
 		ConfigRef: ConfigRef{
-			WorkspaceID: key.WorkspaceID,
-			Version:     "local",
+			WorkspaceID:  key.WorkspaceID,
+			Version:      "local",
 			LastModified: time.Now().Unix(),
 		},
 		Metadata: key.Metadata,

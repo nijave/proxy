@@ -33,24 +33,24 @@ type FileConfigProvider struct {
 // FileConfig represents the on-disk configuration file format.
 // It supports both YAML and JSON encoding.
 type FileConfig struct {
-	Version    string                       `json:"version" yaml:"version"`
-	Workspaces map[string]WorkspaceConfig   `json:"workspaces" yaml:"workspaces"`
+	Version    string                     `json:"version" yaml:"version"`
+	Workspaces map[string]WorkspaceConfig `json:"workspaces" yaml:"workspaces"`
 }
 
 // WorkspaceConfig defines configuration for a single workspace/tenant.
 type WorkspaceConfig struct {
 	Supermodels map[string]SupermodelFileConfig `json:"supermodels" yaml:"supermodels"`
-	Providers   map[string]ProviderFileConfig  `json:"providers" yaml:"providers"`
-	Enforcement EnforcementFileConfig        `json:"enforcement" yaml:"enforcement"`
-	Logging     LoggingFileConfig              `json:"logging" yaml:"logging"`
+	Providers   map[string]ProviderFileConfig   `json:"providers" yaml:"providers"`
+	Enforcement EnforcementFileConfig           `json:"enforcement" yaml:"enforcement"`
+	Logging     LoggingFileConfig               `json:"logging" yaml:"logging"`
 }
 
 // SupermodelFileConfig represents the file format for supermodel configuration.
 type SupermodelFileConfig struct {
-	Name        string                         `json:"name" yaml:"name"`
-	Description string                         `json:"description,omitempty" yaml:"description,omitempty"`
-	Default     ModelFileConfig                `json:"default" yaml:"default"`
-	Scenarios   map[string]ScenarioFileConfig  `json:"scenarios,omitempty" yaml:"scenarios,omitempty"`
+	Name        string                        `json:"name" yaml:"name"`
+	Description string                        `json:"description,omitempty" yaml:"description,omitempty"`
+	Default     ModelFileConfig               `json:"default" yaml:"default"`
+	Scenarios   map[string]ScenarioFileConfig `json:"scenarios,omitempty" yaml:"scenarios,omitempty"`
 }
 
 // ModelFileConfig represents model configuration in file format (with YAML tags).
@@ -643,8 +643,8 @@ func (p *FileConfigProvider) compileToRuntime(cfg *FileConfig) (*RuntimeConfig, 
 			},
 		},
 		{
-			Name:     "default",
-			Priority: 0,
+			Name:       "default",
+			Priority:   0,
 			Conditions: RoutingConditions{},
 		},
 	}

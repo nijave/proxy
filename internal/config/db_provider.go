@@ -377,8 +377,8 @@ func (p *DBConfigProvider) compileToRuntime(
 			},
 		},
 		{
-			Name:     "default",
-			Priority: 0,
+			Name:       "default",
+			Priority:   0,
 			Conditions: RoutingConditions{},
 		},
 	}
@@ -440,15 +440,15 @@ func maskDSN(dsn string) string {
 
 // dbWorkspaceRecord represents the workspace config stored in the database.
 type dbWorkspaceRecord struct {
-	Logging     LoggingPolicy    `json:"logging,omitempty"`
+	Logging     LoggingPolicy     `json:"logging,omitempty"`
 	Enforcement EnforcementPolicy `json:"enforcement,omitempty"`
 }
 
 // dbSupermodelRecord represents a supermodel config stored in the database.
 type dbSupermodelRecord struct {
-	Name        string                     `json:"name"`
-	Description string                     `json:"description,omitempty"`
-	Default     ModelConfig                `json:"default"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description,omitempty"`
+	Default     ModelConfig               `json:"default"`
 	Scenarios   map[string]ScenarioConfig `json:"scenarios,omitempty"`
 }
 

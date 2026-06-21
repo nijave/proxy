@@ -22,11 +22,11 @@ type AuthProviderConfig struct {
 
 // ConfigProviderConfig holds configuration provider configuration.
 type ConfigProviderConfig struct {
-	Provider     string        `json:"provider" yaml:"provider"`
-	Path         string        `json:"path" yaml:"path"`
-	DB           DBConfig      `json:"db" yaml:"db"`
-	SnapshotURL  string        `json:"snapshot_url" yaml:"snapshot_url"`
-	CacheTTL     time.Duration `json:"cache_ttl" yaml:"cache_ttl"`
+	Provider    string        `json:"provider" yaml:"provider"`
+	Path        string        `json:"path" yaml:"path"`
+	DB          DBConfig      `json:"db" yaml:"db"`
+	SnapshotURL string        `json:"snapshot_url" yaml:"snapshot_url"`
+	CacheTTL    time.Duration `json:"cache_ttl" yaml:"cache_ttl"`
 }
 
 // Config holds the complete application configuration.

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/routatic/proxy/internal/auth"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/routatic/proxy/internal/auth"
 )
 
 // setupTestDB creates an in-memory SQLite database for testing.
@@ -44,19 +44,19 @@ func seedTestData(t *testing.T, db *sql.DB, workspaceID string) {
 	// Insert workspace
 	workspaceConfig := map[string]interface{}{
 		"logging": map[string]interface{}{
-			"level":            "info",
-			"log_requests":     true,
-			"log_responses":    false,
-			"log_latency":      true,
-			"log_rate_limits":  true,
-			"pii_masking":      true,
+			"level":             "info",
+			"log_requests":      true,
+			"log_responses":     false,
+			"log_latency":       true,
+			"log_rate_limits":   true,
+			"pii_masking":       true,
 			"sensitive_headers": []string{"authorization", "x-api-key"},
 		},
 		"enforcement": map[string]interface{}{
-			"require_auth":              true,
+			"require_auth":            true,
 			"enforce_model_allowlist": true,
-			"enforce_budgets":           true,
-			"enforce_rate_limits":       true,
+			"enforce_budgets":         true,
+			"enforce_rate_limits":     true,
 		},
 	}
 	workspaceJSON, _ := json.Marshal(workspaceConfig)
@@ -96,11 +96,11 @@ func seedTestData(t *testing.T, db *sql.DB, workspaceID string) {
 			"name":        "code-assistant",
 			"description": "Code assistant model",
 			"default": map[string]interface{}{
-				"provider":     "opencode-go",
-				"model_id":     "code-davinci-002",
-				"temperature":  0.2,
-				"max_tokens":   8192,
-				"wire_format":  "openai",
+				"provider":    "opencode-go",
+				"model_id":    "code-davinci-002",
+				"temperature": 0.2,
+				"max_tokens":  8192,
+				"wire_format": "openai",
 			},
 		},
 	}
@@ -124,7 +124,7 @@ func seedTestData(t *testing.T, db *sql.DB, workspaceID string) {
 			"base_url":           "https://api.opencode-go.com/v1",
 			"anthropic_base_url": "https://api.opencode-go.com/anthropic",
 			"timeout_ms":         30000,
-			"stream_timeout_ms":    60000,
+			"stream_timeout_ms":  60000,
 		},
 		{
 			"name":               "opencode-zen",
@@ -132,7 +132,7 @@ func seedTestData(t *testing.T, db *sql.DB, workspaceID string) {
 			"base_url":           "https://api.opencode-zen.com/v1",
 			"anthropic_base_url": "https://api.opencode-zen.com/anthropic",
 			"timeout_ms":         45000,
-			"stream_timeout_ms":    90000,
+			"stream_timeout_ms":  90000,
 		},
 	}
 
@@ -553,7 +553,7 @@ func TestDBConfigProvider_ConcurrentAccess(t *testing.T) {
 
 	// Seed data
 	workspaceConfig := map[string]interface{}{
-		"logging": map[string]interface{}{"level": "info"},
+		"logging":     map[string]interface{}{"level": "info"},
 		"enforcement": map[string]interface{}{},
 	}
 	workspaceJSON, _ := json.Marshal(workspaceConfig)
