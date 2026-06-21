@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -56,6 +57,21 @@ func LoadFromPath(path string) (*Config, error) {
 		return nil, fmt.Errorf("loading config from %s: %w", path, err)
 	}
 
+	applyEnvOverrides(cfg)
+	applyDefaults(cfg)
+
+	if err := validate(cfg); err != nil {
+		return nil, fmt.Errorf("validating config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// LoadFromEnv creates a configuration entirely from environment variables.
+// This is used for serverless deployments where no config file exists.
+// All settings are sourced from env vars with sensible defaults.
+func LoadFromEnv() (*Config, error) {
+	cfg := &Config{}
 	applyEnvOverrides(cfg)
 	applyDefaults(cfg)
 
@@ -148,6 +164,33 @@ func applyEnvOverrides(cfg *Config) {
 	if v := envValue("ROUTATIC_PROXY_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
 	}
+
+	// Cloud provider settings for serverless deployments
+	if v := envValue("ROUTATIC_PROXY_MODE"); v != "" {
+		cfg.Mode = v
+	}
+	if v := envValue("ROUTATIC_PROXY_AUTH_PROVIDER"); v != "" {
+		cfg.Auth.Provider = v
+	}
+	if v := envValue("ROUTATIC_PROXY_AUTH_INTROSPECTION_URL"); v != "" {
+		cfg.Auth.IntrospectionURL = v
+	}
+	if v := envValue("ROUTATIC_PROXY_AUTH_CACHE_TTL"); v != "" {
+		if ttl, err := time.ParseDuration(v); err == nil {
+			cfg.Auth.CacheTTL = ttl
+		}
+	}
+	if v := envValue("ROUTATIC_PROXY_CONFIG_PROVIDER"); v != "" {
+		cfg.ConfigProv.Provider = v
+	}
+	if v := envValue("ROUTATIC_PROXY_CONFIG_SNAPSHOT_URL"); v != "" {
+		cfg.ConfigProv.SnapshotURL = v
+	}
+	if v := envValue("ROUTATIC_PROXY_CONFIG_CACHE_TTL"); v != "" {
+		if ttl, err := time.ParseDuration(v); err == nil {
+			cfg.ConfigProv.CacheTTL = ttl
+		}
+	}
 }
 
 func envValue(name string) string {
@@ -213,6 +256,19 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = defaultLogLevel
+	}
+	// For serverless/cloud deployments: if no mode is set but cloud provider env vars are present,
+	// default to managed mode with cloud providers.
+	if cfg.Mode == "" {
+		if os.Getenv("ROUTATIC_PROXY_SERVICE_TOKEN") != "" {
+			cfg.Mode = "managed"
+			if cfg.Auth.Provider == "" {
+				cfg.Auth.Provider = "cloud"
+			}
+			if cfg.ConfigProv.Provider == "" {
+				cfg.ConfigProv.Provider = "cloud_snapshot"
+			}
+		}
 	}
 	if cfg.Fallbacks == nil {
 		cfg.Fallbacks = make(map[string][]ModelConfig)

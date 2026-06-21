@@ -95,7 +95,19 @@ func runServe(configPath string, port int, background, daemonize bool) error {
 		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
 	}
 
-	cfg, err := config.Load()
+	var cfg *config.Config
+	var err error
+
+	// Check if a config file exists; if not, load entirely from environment.
+	// This supports serverless deployments (Railway, etc.) where no config file exists.
+	configFilePath := config.ResolveConfigPath()
+	if _, statErr := os.Stat(configFilePath); statErr == nil {
+		cfg, err = config.Load()
+	} else {
+		// Config file doesn't exist - try loading from environment via ROUTATIC_PROXY_SERVICE_TOKEN
+		// and other cloud-specific environment variables
+		cfg, err = config.LoadFromEnv()
+	}
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -107,8 +119,11 @@ func runServe(configPath string, port int, background, daemonize bool) error {
 
 	pidPath := getPIDPath()
 
-	// Check if already running before writing this process' PID.
-	if !daemonize {
+	// Skip PID file operations in serverless/cloud environments
+	// Detection: no local config file + mode is managed
+	isServerless := cfg.Mode == "managed" && cfg.ConfigProv.Provider == "cloud_snapshot"
+
+	if !isServerless && !daemonize {
 		if pid, err := daemon.GetPID(pidPath); err == nil {
 			// Check if process is still running.
 			if daemon.IsProcessRunning(pid) {
@@ -120,32 +135,35 @@ func runServe(configPath string, port int, background, daemonize bool) error {
 	}
 
 	// Daemonize setup (child process after re-exec).
-	if daemonize {
-		paths, err := daemon.DefaultPaths()
-		if err != nil {
-			return err
+	// Skip PID/config directory operations in serverless mode.
+	if !isServerless {
+		if daemonize {
+			paths, err := daemon.DefaultPaths()
+			if err != nil {
+				return err
+			}
+			if err := paths.EnsureConfigDir(); err != nil {
+				return err
+			}
+			if err := daemon.DaemonizeSetup(paths); err != nil {
+				return err
+			}
+		} else {
+			// Ensure config directory exists before writing PID file.
+			paths, err := daemon.DefaultPaths()
+			if err != nil {
+				return err
+			}
+			if err := paths.EnsureConfigDir(); err != nil {
+				return err
+			}
+			// Write PID file for foreground mode.
+			if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
+				return fmt.Errorf("failed to write PID file: %w", err)
+			}
 		}
-		if err := paths.EnsureConfigDir(); err != nil {
-			return err
-		}
-		if err := daemon.DaemonizeSetup(paths); err != nil {
-			return err
-		}
-	} else {
-		// Ensure config directory exists before writing PID file.
-		paths, err := daemon.DefaultPaths()
-		if err != nil {
-			return err
-		}
-		if err := paths.EnsureConfigDir(); err != nil {
-			return err
-		}
-		// Write PID file for foreground mode.
-		if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
-			return fmt.Errorf("failed to write PID file: %w", err)
-		}
+		defer func() { _ = os.Remove(pidPath) }()
 	}
-	defer func() { _ = os.Remove(pidPath) }()
 
 	// Initialize providers based on mode.
 	authProvider, configProvider, err := initProviders(cfg)
