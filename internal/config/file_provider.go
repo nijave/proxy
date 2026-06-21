@@ -527,7 +527,8 @@ func (p *FileConfigProvider) validateWorkspaceConfig(_wsID string, wsCfg Workspa
 }
 
 // validateSupermodelConfig validates a single supermodel configuration.
-func (p *FileConfigProvider) validateSupermodelConfig(name string, smCfg SupermodelFileConfig) error {
+func (p *FileConfigProvider) validateSupermodelConfig(_name string, smCfg SupermodelFileConfig) error {
+	_ = _name
 	if smCfg.Name == "" {
 		return fmt.Errorf("supermodel name is required")
 	}
@@ -554,7 +555,8 @@ func (p *FileConfigProvider) validateSupermodelConfig(name string, smCfg Supermo
 }
 
 // validateProviderConfig validates a single provider configuration.
-func (p *FileConfigProvider) validateProviderConfig(name string, provider ProviderFileConfig) error {
+func (p *FileConfigProvider) validateProviderConfig(_name string, provider ProviderFileConfig) error {
+	_ = _name
 	if provider.Name == "" {
 		return fmt.Errorf("provider name is required")
 	}
