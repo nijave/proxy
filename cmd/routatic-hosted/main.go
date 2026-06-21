@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/routatic/proxy/internal/auth"
 	"github.com/routatic/proxy/internal/config"
 )
 
@@ -167,18 +168,11 @@ type cloudConfigRawProvider struct {
 	httpClient   *http.Client
 }
 
-func (p *cloudConfigRawProvider) GetEffectiveConfig(ctx context.Context, authCtx interface{}) (*config.RuntimeConfig, error) {
-	//auth, ok := authCtx.(*auth.AuthContext)
-	//if !ok {
-	//	return nil, fmt.Errorf("invalid auth context")
-	//}
-
-	//url := p.baseURL + configSnapshotPath + "?workspace=" + auth.WorkspaceID
-
-	// Get workspace from context or use default
+func (p *cloudConfigRawProvider) GetEffectiveConfig(ctx context.Context, authCtx *auth.AuthContext) (*config.RuntimeConfig, error) {
+	// Get workspace from auth context or use default
 	workspaceID := "default"
-	if ctx.Value("workspace_id") != nil {
-		workspaceID = ctx.Value("workspace_id").(string)
+	if authCtx != nil {
+		workspaceID = authCtx.WorkspaceID
 	}
 
 	url := p.baseURL + configSnapshotPath + "?workspace=" + workspaceID
