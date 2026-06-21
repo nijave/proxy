@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 )
 
@@ -75,6 +74,8 @@ func (p *NoAuthProvider) HealthCheck(ctx context.Context) error {
 }
 
 // isLocalhostRequest checks if the request is coming from localhost.
+// SECURITY: This function only uses RemoteAddr, NOT X-Forwarded-For headers,
+// because anyone can spoof X-Forwarded-For. This provider is for local development only.
 func (p *NoAuthProvider) isLocalhostRequest(req *http.Request) bool {
 	if req == nil {
 		return true // Allow nil requests (for testing)
@@ -96,25 +97,17 @@ func (p *NoAuthProvider) isLocalhostRequest(req *http.Request) bool {
 		return true
 	}
 
-	// Check X-Forwarded-For and similar headers for the remote address
-	remoteAddr := req.RemoteAddr
-	if forwardedFor := req.Header.Get("X-Forwarded-For"); forwardedFor != "" {
-		// Take the first IP in the chain
-		ips := strings.Split(forwardedFor, ",")
-		if len(ips) > 0 {
-			remoteAddr = strings.TrimSpace(ips[0])
-		}
-	}
-
-	// Parse the remote address
-	host, _, err := net.SplitHostPort(remoteAddr)
+	// Only trust RemoteAddr - NOT X-Forwarded-For or other headers.
+	// X-Forwarded-For can be spoofed by clients and must only be trusted
+	// when validated against a list of trusted proxies (not implemented here).
+	remoteHost, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
 		// If no port, assume it's just the IP
-		host = remoteAddr
+		remoteHost = req.RemoteAddr
 	}
 
 	// Check if remote address is localhost
-	return host == "127.0.0.1" || host == "::1" || host == "localhost"
+	return remoteHost == "127.0.0.1" || remoteHost == "::1" || remoteHost == "localhost"
 }
 
 // copyAuthContext creates a deep copy of the default AuthContext.

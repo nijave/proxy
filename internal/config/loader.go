@@ -297,19 +297,18 @@ func applyDefaults(cfg *Config) {
 	}
 }
 
-// isCloudManagedMode returns true if the config is in managed mode with cloud providers.
+// isCloudManagedMode returns true if the config is in managed mode with cloud config provider.
 // In this mode, API keys and model configuration come from the cloud snapshot,
 // so they are not required in the local bootstrap config.
+// NOTE: This only checks the config provider, not the auth provider.
+// The auth provider only validates tokens - API keys come from the config provider's snapshot.
 func isCloudManagedMode(cfg *Config) bool {
 	if cfg.Mode != "managed" {
 		return false
 	}
-	// Check if using cloud config provider
+	// Check if using cloud config provider.
+	// API keys and model configuration come from the config provider's cloud snapshot.
 	if cfg.ConfigProv.Provider == "cloud_snapshot" || cfg.ConfigProv.Provider == "cloud" {
-		return true
-	}
-	// Check if using cloud auth provider
-	if cfg.Auth.Provider == "cloud" {
 		return true
 	}
 	return false

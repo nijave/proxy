@@ -173,6 +173,12 @@ func (p *LocalKeyAuthProvider) Authenticate(ctx context.Context, req *http.Reque
 		return nil, ErrAuthenticationFailed
 	}
 
+	// Check context cancellation before expensive constant-time comparison.
+	// This respects user cancellation and avoids unnecessary crypto work.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Verify the actual secret using constant-time comparison.
 	if subtle.ConstantTimeCompare([]byte(key.Secret), []byte(token)) != 1 {
 		slog.Debug("key hash matched but secret verification failed", "key_id", key.ID)

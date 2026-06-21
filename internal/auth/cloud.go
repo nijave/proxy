@@ -314,9 +314,9 @@ func (p *CloudAuthProvider) RevokeCache(ctx context.Context, keyID string) error
 // a lightweight request to the introspection endpoint.
 // Thread-safe.
 func (p *CloudAuthProvider) HealthCheck(ctx context.Context) error {
-	// Perform a lightweight check by making an HTTP HEAD request or
-	// a minimal introspection request that will fail quickly.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.introspectionURL, nil)
+	// Perform a lightweight check by making an HTTP HEAD request.
+	// HEAD is more efficient than GET as it doesn't return a response body.
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, p.introspectionURL, nil)
 	if err != nil {
 		return fmt.Errorf("creating health check request: %w", err)
 	}
