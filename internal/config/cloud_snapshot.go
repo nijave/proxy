@@ -292,12 +292,12 @@ func (p *CloudSnapshotConfigProvider) Invalidate(ctx context.Context, workspaceI
 }
 
 // HealthCheck pings the snapshot endpoint to verify connectivity.
-// It makes a lightweight request to check if the endpoint is reachable.
+// It makes a lightweight HEAD request to check if the endpoint is reachable.
 func (p *CloudSnapshotConfigProvider) HealthCheck(ctx context.Context) error {
-	// Use a HEAD request or a minimal GET to check endpoint health
+	// Use HEAD request for efficiency - no response body needed
 	url := p.snapshotURL
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
 		return fmt.Errorf("creating health check request: %w", err)
 	}
