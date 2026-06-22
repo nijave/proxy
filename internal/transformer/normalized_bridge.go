@@ -51,7 +51,7 @@ func NormalizedToResponses(req *core.NormalizedRequest, model config.ModelConfig
 	if req.SystemPrompt != "" {
 		responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
 			Role:    "developer",
-			Content: json.RawMessage(`"` + req.SystemPrompt + `"`),
+			Content: rawJSONString(req.SystemPrompt),
 		})
 	}
 
@@ -68,7 +68,7 @@ func NormalizedToResponses(req *core.NormalizedRequest, model config.ModelConfig
 		}
 
 		if content != "" {
-			input.Content = json.RawMessage(`"` + content + `"`)
+			input.Content = rawJSONString(content)
 		}
 		responsesReq.Input = append(responsesReq.Input, input)
 	}
@@ -288,7 +288,9 @@ func normalizedToMessageRequest(req *core.NormalizedRequest) *types.MessageReque
 
 	// Set system prompt.
 	if req.SystemPrompt != "" {
-		anthropicReq.System = json.RawMessage(`"` + req.SystemPrompt + `"`)
+		if b, err := json.Marshal(req.SystemPrompt); err == nil {
+			anthropicReq.System = json.RawMessage(b)
+		}
 	}
 
 	// Set stream.
@@ -370,6 +372,14 @@ func normalizedToMessageRequest(req *core.NormalizedRequest) *types.MessageReque
 	}
 
 	return anthropicReq
+}
+
+func rawJSONString(s string) json.RawMessage {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return json.RawMessage(b)
 }
 
 // joinMessageText concatenates the content of all messages for use as a

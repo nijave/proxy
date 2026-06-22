@@ -545,10 +545,11 @@ func (h *MessagesHandler) handleStreaming(
 	rw.WriteHeader(http.StatusOK)
 	rw.Flush()
 
-	// Start heartbeat
-	var finished int32
+	// Start heartbeat. Use a child context that is canceled when the handler
+	// returns, ensuring the goroutine stops before the HTTP server finalizes
+	// the response writer.
 	var heartbeatPaused int32
-	heartbeatDone := make(chan struct{})
+	heartbeatCtx, heartbeatCancel := context.WithCancel(clientCtx)
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
@@ -556,23 +557,15 @@ func (h *MessagesHandler) handleStreaming(
 		for {
 			select {
 			case <-ticker.C:
-				if atomic.LoadInt32(&finished) == 1 {
-					return
-				}
 				if atomic.LoadInt32(&heartbeatPaused) == 0 {
 					rw.WriteKeepalive()
 				}
-			case <-heartbeatDone:
-				return
-			case <-clientCtx.Done():
+			case <-heartbeatCtx.Done():
 				return
 			}
 		}
 	}()
-	defer func() {
-		atomic.StoreInt32(&finished, 1)
-		close(heartbeatDone)
-	}()
+	defer heartbeatCancel()
 
 	streamStart := time.Now()
 

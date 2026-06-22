@@ -1,4 +1,4 @@
-# routatic-proxy (prev OC-GO-CC)
+# routatic-proxy (prev OC-GO-CC) [Join us on Discord](https://discord.gg/pUrfwfTFxM)
 
 A Go CLI proxy that lets you route [Claude Code](https://docs.anthropic.com/en/docs/claude-code) requests through multiple upstream providers — [OpenCode Go](https://opencode.ai/docs/go/), [OpenCode Zen](https://opencode.ai/docs/zen/), and [AWS Bedrock](https://aws.amazon.com/bedrock/) — with automatic model selection and format transformation.
 
@@ -109,18 +109,18 @@ routatic-proxy --version          Show version
 
 ## Documentation
 
-| Document                                 | Description                                                     |
-| ---------------------------------------- | --------------------------------------------------------------- |
-| [INSTALLATION.md](INSTALLATION.md)       | Homebrew, Scoop, build from source, release binaries            |
-| [CONFIGURATION.md](CONFIGURATION.md)     | Config file reference, env vars, model routing, fallback chains |
-| [MODELS.md](MODELS.md)                   | Model capabilities, costs, and routing recommendations          |
-| [CONTRIBUTING.md](CONTRIBUTING.md)       | Development setup, architecture, how it works                   |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues and debug mode                                    |
-| [docs/architecture.md](docs/architecture.md)           | System design, request flow, module overview                    |
-| [docs/reference-api.md](docs/reference-api.md)         | HTTP API reference (endpoints, streaming, errors)               |
-| [docs/howto-add-model.md](docs/howto-add-model.md)     | Adding new models (zero code changes)                           |
-| [docs/howto-custom-routing.md](docs/howto-custom-routing.md) | Customizing scenario detection and model selection         |
-| [docs/howto-debug-routing.md](docs/howto-debug-routing.md)   | Debugging routing issues and common problems               |
+| Document                                                     | Description                                                     |
+| ------------------------------------------------------------ | --------------------------------------------------------------- |
+| [INSTALLATION.md](INSTALLATION.md)                           | Homebrew, Scoop, build from source, release binaries            |
+| [CONFIGURATION.md](CONFIGURATION.md)                         | Config file reference, env vars, model routing, fallback chains |
+| [MODELS.md](MODELS.md)                                       | Model capabilities, costs, and routing recommendations          |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                           | Development setup, architecture, how it works                   |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                     | Common issues and debug mode                                    |
+| [docs/architecture.md](docs/architecture.md)                 | System design, request flow, module overview                    |
+| [docs/reference-api.md](docs/reference-api.md)               | HTTP API reference (endpoints, streaming, errors)               |
+| [docs/howto-add-model.md](docs/howto-add-model.md)           | Adding new models (zero code changes)                           |
+| [docs/howto-custom-routing.md](docs/howto-custom-routing.md) | Customizing scenario detection and model selection              |
+| [docs/howto-debug-routing.md](docs/howto-debug-routing.md)   | Debugging routing issues and common problems                    |
 
 ## License
 
