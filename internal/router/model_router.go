@@ -5,8 +5,10 @@ package router
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
@@ -23,6 +25,7 @@ type ModelRouter struct {
 	catMu       sync.Mutex
 	cat         *catalog.IndexedCatalog
 	catErr      error
+	catMtime    time.Time
 }
 
 // NewModelRouter creates a new model router.
@@ -37,8 +40,8 @@ func NewModelRouterWithCatalog(atomic *config.AtomicConfig, catalogPath string) 
 	return &ModelRouter{atomic: atomic, catalogPath: catalogPath}
 }
 
-// catalog lazily loads and caches the indexed catalog. If no catalog path is
-// configured it returns (nil, nil) so that legacy behavior is preserved.
+// catalog lazily loads and caches the indexed catalog, automatically
+// reloading when the underlying file changes on disk.
 func (r *ModelRouter) catalog() (*catalog.IndexedCatalog, error) {
 	if r.catalogPath == "" {
 		return nil, nil
@@ -47,11 +50,21 @@ func (r *ModelRouter) catalog() (*catalog.IndexedCatalog, error) {
 	r.catMu.Lock()
 	defer r.catMu.Unlock()
 
-	if r.cat != nil || r.catErr != nil {
-		return r.cat, r.catErr
+	fi, err := os.Stat(r.catalogPath)
+	if err != nil {
+		r.cat = nil
+		r.catErr = fmt.Errorf("stat catalog file: %w", err)
+		return nil, r.catErr
+	}
+
+	if r.cat != nil && !fi.ModTime().After(r.catMtime) {
+		return r.cat, nil
 	}
 
 	r.cat, r.catErr = catalog.Load(r.catalogPath)
+	if r.catErr == nil {
+		r.catMtime = fi.ModTime()
+	}
 	return r.cat, r.catErr
 }
 
