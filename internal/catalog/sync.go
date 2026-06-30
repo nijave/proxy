@@ -70,6 +70,16 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 		return nil, fmt.Errorf("catalog must contain models and providers objects")
 	}
 
+	var catalog Catalog
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return nil, fmt.Errorf("parse catalog contents: %w", err)
+	}
+
+	idx, err := BuildProviderIndex(catalog)
+	if err != nil {
+		return nil, fmt.Errorf("build provider index: %w", err)
+	}
+
 	sum := sha256.Sum256(body)
 	hash := hex.EncodeToString(sum[:])
 
@@ -83,6 +93,14 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 	if err := os.Rename(tmpPath, finalPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return nil, fmt.Errorf("rename catalog file: %w", err)
+	}
+
+	if err := idx.Write(destDir); err != nil {
+		_ = os.Remove(tmpPath)
+		_ = os.Remove(finalPath)
+		_ = os.Remove(filepath.Join(destDir, indexTmpFileName))
+		_ = os.Remove(filepath.Join(destDir, indexFileName))
+		return nil, fmt.Errorf("write provider index: %w", err)
 	}
 
 	lock := &Lock{

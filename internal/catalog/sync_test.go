@@ -13,7 +13,7 @@ import (
 )
 
 func TestSync(t *testing.T) {
-	validCatalog := `{"models":{"gpt-4":{}},"providers":{"openai":{}}}`
+	validCatalog := `{"models":{"gpt-4":{"providers":["openai"]}},"providers":{"openai":{}}}`
 	validHash := sha256.Sum256([]byte(validCatalog))
 
 	cases := []struct {
@@ -76,9 +76,17 @@ func TestSync(t *testing.T) {
 				if string(data) != tc.body {
 					t.Fatalf("catalog content mismatch: got %q, want %q", string(data), tc.body)
 				}
+
+				indexPath := filepath.Join(destDir, indexFileName)
+				if _, err := os.Stat(indexPath); err != nil {
+					t.Fatalf("expected index file: %v", err)
+				}
 			} else {
 				if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 					t.Fatalf("expected no catalog file, got %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(destDir, indexFileName)); !os.IsNotExist(err) {
+					t.Fatalf("expected no index file, got %v", err)
 				}
 			}
 
@@ -132,7 +140,7 @@ func TestSyncOversized(t *testing.T) {
 		t.Fatalf("expected error for oversized response, got nil")
 	}
 
-	for _, name := range []string{catalogFileName, tmpFileName, lockFileName} {
+	for _, name := range []string{catalogFileName, tmpFileName, lockFileName, indexFileName, indexTmpFileName} {
 		path := filepath.Join(destDir, name)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected no %s after oversized sync failure, got %v", name, err)
@@ -176,7 +184,7 @@ func TestSyncMissingModels(t *testing.T) {
 func TestSyncCreatesDestDir(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":{"x":{}},"providers":{"y":{}}}`))
+		_, _ = w.Write([]byte(`{"models":{"x":{"providers":["y"]}},"providers":{"y":{}}}`))
 	}))
 	defer server.Close()
 
