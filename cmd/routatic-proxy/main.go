@@ -477,15 +477,15 @@ func runModelsList(cmd *cobra.Command, configPath, provider string) error {
 	catalogPath := filepath.Join(catalogDir, "catalog.json")
 	cat, err := catalog.Load(catalogPath)
 	if err != nil {
-		return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first.")
+		return fmt.Errorf("catalog not found; run 'routatic-proxy catalog sync' first")
 	}
 
 	providers := selectProviders(provider, cfg)
 	if len(providers) == 0 {
 		if provider != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "No models found for provider %q.\n", provider)
+			cmd.Printf("No models found for provider %q.\n", provider)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "No enabled providers found.")
+			cmd.Println("No enabled providers found.")
 		}
 		return nil
 	}
@@ -508,19 +508,19 @@ func runModelsList(cmd *cobra.Command, configPath, provider string) error {
 
 	if len(lines) == 0 {
 		if provider != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "No models found for provider %q.\n", provider)
+			cmd.Printf("No models found for provider %q.\n", provider)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "No models found for enabled providers.")
+			cmd.Println("No models found for enabled providers.")
 		}
 		return nil
 	}
 
 	for _, line := range lines {
-		fmt.Fprintln(cmd.OutOrStdout(), line)
+		cmd.Println(line)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout())
-	fmt.Fprintln(cmd.OutOrStdout(), "Use these model IDs in your config.json file (model_overrides).")
+	cmd.Println()
+	cmd.Println("Use these model IDs in your config.json file (model_overrides).")
 	return nil
 }
 

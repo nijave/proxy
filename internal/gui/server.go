@@ -55,15 +55,15 @@ type Server struct {
 
 // Options configures the GUI server.
 type Options struct {
-	History         *history.History
-	Metrics         *metrics.Metrics
-	AtomicConfig    *config.AtomicConfig
-	ProxyPort       int
-	StartProxy      func() error
-	StopProxy       func() error
-	CatalogDir      string
+	History          *history.History
+	Metrics          *metrics.Metrics
+	AtomicConfig     *config.AtomicConfig
+	ProxyPort        int
+	StartProxy       func() error
+	StopProxy        func() error
+	CatalogDir       string
 	CatalogSourceURL string
-	Logger          *slog.Logger
+	Logger           *slog.Logger
 }
 
 // New creates a new GUI server.
@@ -72,9 +72,9 @@ func New(opts Options) *Server {
 		opts.Logger = slog.Default()
 	}
 	s := &Server{
-		hist:       opts.History,
-		met:        opts.Metrics,
-		atomicCfg:  opts.AtomicConfig,
+		hist:             opts.History,
+		met:              opts.Metrics,
+		atomicCfg:        opts.AtomicConfig,
 		proxyPort:        opts.ProxyPort,
 		startProxy:       opts.StartProxy,
 		stopProxy:        opts.StopProxy,
