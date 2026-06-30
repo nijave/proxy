@@ -278,3 +278,138 @@ func TestSelectCheapest_UnknownScenarioReturnsError(t *testing.T) {
 		t.Fatal("SelectCheapest expected error for unknown scenario, got nil")
 	}
 }
+
+// TestSelectCheapest_Constraints_* exercises constraint handling with the cost
+// fixture catalog, ensuring required capabilities are never sacrificed for a
+// lower price.
+
+func TestSelectCheapest_Constraints_ToolsRequired(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("tools_required", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	if got.ModelID != "cheap-tools" {
+		t.Errorf("SelectCheapest(tools_required) = %q, want %q", got.ModelID, "cheap-tools")
+	}
+	if got.Provider != "opencode-go" {
+		t.Errorf("SelectCheapest(tools_required) provider = %q, want %q", got.Provider, "opencode-go")
+	}
+	if !got.Tools {
+		t.Errorf("SelectCheapest(tools_required).Tools = false, want true")
+	}
+	// cheap-no-tools has the same total cost but lacks tools and must not win.
+	if got.CostInputPerM+got.CostOutputPerM != 2.0 {
+		t.Errorf("SelectCheapest(tools_required) total cost = %v, want 2.0", got.CostInputPerM+got.CostOutputPerM)
+	}
+}
+
+func TestSelectCheapest_Constraints_VisionRequired(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("vision_required", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	if got.ModelID != "vision-model" {
+		t.Errorf("SelectCheapest(vision_required) = %q, want %q", got.ModelID, "vision-model")
+	}
+	if got.Provider != "openrouter" {
+		t.Errorf("SelectCheapest(vision_required) provider = %q, want %q", got.Provider, "openrouter")
+	}
+	if !got.Vision {
+		t.Errorf("SelectCheapest(vision_required).Vision = false, want true")
+	}
+	// vision-model is not the cheapest overall model; cheaper non-vision models must be ignored.
+	if got.CostInputPerM+got.CostOutputPerM != 8.0 {
+		t.Errorf("SelectCheapest(vision_required) total cost = %v, want 8.0", got.CostInputPerM+got.CostOutputPerM)
+	}
+}
+
+func TestSelectCheapest_Constraints_ReasoningRequired(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("reasoning_required", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	if got.ModelID != "reasoning-model" {
+		t.Errorf("SelectCheapest(reasoning_required) = %q, want %q", got.ModelID, "reasoning-model")
+	}
+	if got.Provider != "openrouter" {
+		t.Errorf("SelectCheapest(reasoning_required) provider = %q, want %q", got.Provider, "openrouter")
+	}
+	if !got.Reasoning {
+		t.Errorf("SelectCheapest(reasoning_required).Reasoning = false, want true")
+	}
+}
+
+func TestSelectCheapest_Constraints_ContextWindow(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("long_context", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	if got.ModelID != "large-context" {
+		t.Errorf("SelectCheapest(long_context) = %q, want %q", got.ModelID, "large-context")
+	}
+	if got.ContextWindow < 500000 {
+		t.Errorf("SelectCheapest(long_context).ContextWindow = %d, want >= 500000", got.ContextWindow)
+	}
+	// Cheaper models with smaller context windows must be excluded.
+	if got.CostInputPerM+got.CostOutputPerM != 3.0 {
+		t.Errorf("SelectCheapest(long_context) total cost = %v, want 3.0", got.CostInputPerM+got.CostOutputPerM)
+	}
+}
+
+func TestSelectCheapest_Constraints_CombinedVisionAndTools(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("vision_complex", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	if got.ModelID != "vision-model" {
+		t.Errorf("SelectCheapest(vision_complex) = %q, want %q", got.ModelID, "vision-model")
+	}
+	if got.Provider != "openrouter" {
+		t.Errorf("SelectCheapest(vision_complex) provider = %q, want %q", got.Provider, "openrouter")
+	}
+	if !got.Vision {
+		t.Errorf("SelectCheapest(vision_complex).Vision = false, want true")
+	}
+	if !got.Tools {
+		t.Errorf("SelectCheapest(vision_complex).Tools = false, want true")
+	}
+	// vision-model is the only model satisfying both constraints and is not the cheapest overall.
+	if got.CostInputPerM+got.CostOutputPerM != 8.0 {
+		t.Errorf("SelectCheapest(vision_complex) total cost = %v, want 8.0", got.CostInputPerM+got.CostOutputPerM)
+	}
+}
