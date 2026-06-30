@@ -47,10 +47,10 @@ func catalogSyncCmd() *cobra.Command {
 				return fmt.Errorf("catalog sync failed: %w", err)
 			}
 
-			fmt.Printf("Catalog synced to %s\n", catalogDir)
-			fmt.Printf("  SHA256: %s\n", lock.SHA256)
-			fmt.Printf("  Bytes:  %d\n", lock.Bytes)
-			fmt.Printf("  TTL:    %d hours\n", lock.TTLHours)
+			cmd.Printf("Catalog synced to %s\n", catalogDir)
+			cmd.Printf("  SHA256: %s\n", lock.SHA256)
+			cmd.Printf("  Bytes:  %d\n", lock.Bytes)
+			cmd.Printf("  TTL:    %d hours\n", lock.TTLHours)
 			return nil
 		},
 	}
