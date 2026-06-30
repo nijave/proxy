@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/daemon"
 	"github.com/routatic/proxy/internal/debug"
@@ -423,84 +425,82 @@ func checkClaudeEnv(source string, env map[string]string, expectedURL string, an
 
 // modelsCmd returns the command to list available models.
 func modelsCmd() *cobra.Command {
-	return &cobra.Command{
+	var configPath string
+	cmd := &cobra.Command{
 		Use:   "models",
-		Short: "List available OpenCode Go models",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Available OpenCode Go models:")
-			fmt.Println()
-			fmt.Println("  Model ID                   Endpoint Type")
-			fmt.Println("  ──────────────────────────────────────────────")
-			fmt.Println("  glm-5.2                    OpenAI-compatible")
-			fmt.Println("  glm-5.1                    OpenAI-compatible")
-			fmt.Println("  glm-5                      OpenAI-compatible (deprecated)")
-			fmt.Println("  kimi-k2.7-code             OpenAI-compatible")
-			fmt.Println("  kimi-k2.6                  OpenAI-compatible")
-			fmt.Println("  kimi-k2.5                  OpenAI-compatible")
-			fmt.Println("  mimo-v2.5-pro              OpenAI-compatible")
-			fmt.Println("  mimo-v2.5                  OpenAI-compatible")
-			fmt.Println("  minimax-m3                 Anthropic-compatible")
-			fmt.Println("  minimax-m2.7               Anthropic-compatible")
-			fmt.Println("  minimax-m2.5               Anthropic-compatible")
-			fmt.Println("  deepseek-v4-pro            OpenAI-compatible")
-			fmt.Println("  deepseek-v4-flash          OpenAI-compatible")
-			fmt.Println("  qwen3.7-max                Anthropic-compatible")
-			fmt.Println("  qwen3.7-plus               Anthropic-compatible")
-			fmt.Println("  qwen3.6-plus               Anthropic-compatible")
-			fmt.Println("  qwen3.5-plus               Anthropic-compatible")
-			fmt.Println()
-			fmt.Println("Available OpenCode Zen models (free tier):")
-			fmt.Println()
-			fmt.Println("  deepseek-v4-flash-free     OpenAI-compatible")
-			fmt.Println("  grok-build-0.1             OpenAI-compatible")
-			fmt.Println("  big-pickle                 OpenAI-compatible")
-			fmt.Println("  mimo-v2.5-free             OpenAI-compatible")
-			fmt.Println("  north-mini-code-free       OpenAI-compatible")
-			fmt.Println("  nemotron-3-ultra-free      OpenAI-compatible")
-			fmt.Println()
-			fmt.Println("Available OpenCode Zen models (Anthropic endpoint):")
-			fmt.Println()
-			fmt.Println("  claude-fable-5             Anthropic-compatible")
-			fmt.Println("  claude-opus-4-8            Anthropic-compatible")
-			fmt.Println("  claude-opus-4-7            Anthropic-compatible")
-			fmt.Println("  claude-opus-4-6            Anthropic-compatible")
-			fmt.Println("  claude-opus-4-5            Anthropic-compatible")
-			fmt.Println("  claude-opus-4-1            Anthropic-compatible")
-			fmt.Println("  claude-sonnet-4-6          Anthropic-compatible")
-			fmt.Println("  claude-sonnet-4-5          Anthropic-compatible")
-			fmt.Println("  claude-sonnet-4            Anthropic-compatible")
-			fmt.Println("  claude-haiku-4-5           Anthropic-compatible")
-			fmt.Println("  claude-3-5-haiku           Anthropic-compatible")
-			fmt.Println()
-			fmt.Println("Available OpenCode Zen models (Responses endpoint):")
-			fmt.Println()
-			fmt.Println("  gpt-5.5                    Responses-compatible")
-			fmt.Println("  gpt-5.5-pro                Responses-compatible")
-			fmt.Println("  gpt-5.4                    Responses-compatible")
-			fmt.Println("  gpt-5.4-pro                Responses-compatible")
-			fmt.Println("  gpt-5.4-mini               Responses-compatible")
-			fmt.Println("  gpt-5.4-nano               Responses-compatible")
-			fmt.Println("  gpt-5.3-codex              Responses-compatible")
-			fmt.Println("  gpt-5.3-codex-spark        Responses-compatible")
-			fmt.Println("  gpt-5.2                    Responses-compatible")
-			fmt.Println("  gpt-5.2-codex              Responses-compatible")
-			fmt.Println("  gpt-5.1                    Responses-compatible")
-			fmt.Println("  gpt-5.1-codex              Responses-compatible")
-			fmt.Println("  gpt-5.1-codex-max          Responses-compatible")
-			fmt.Println("  gpt-5.1-codex-mini         Responses-compatible")
-			fmt.Println("  gpt-5                      Responses-compatible")
-			fmt.Println("  gpt-5-codex                Responses-compatible")
-			fmt.Println("  gpt-5-nano                 Responses-compatible")
-			fmt.Println()
-			fmt.Println("Available OpenCode Zen models (Gemini endpoint):")
-			fmt.Println()
-			fmt.Println("  gemini-3.5-flash           Gemini-compatible")
-			fmt.Println("  gemini-3.1-pro             Gemini-compatible")
-			fmt.Println("  gemini-3-flash             Gemini-compatible")
-			fmt.Println()
-			fmt.Println("Use these model IDs in your config.json file (model_overrides).")
+		Short: "List available models from the catalog",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if configPath != "" {
+				_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
+			}
+
+			cfgPath := config.ResolveConfigPath()
+			cfg, err := config.LoadFromPath(cfgPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			catalogDir := resolveCatalogDir(cfgPath)
+			catalogPath := filepath.Join(catalogDir, "catalog.json")
+			cat, err := catalog.Load(catalogPath)
+			if err != nil {
+				return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first")
+			}
+
+			globalKeys := cfg.EffectiveAPIKeys()
+			providerKeys := map[string][]string{
+				"opencode-go":  cfg.OpenCodeGo.EffectiveAPIKeys(),
+				"opencode-zen": cfg.OpenCodeZen.EffectiveAPIKeys(),
+				"aws-bedrock":  cfg.AWSBedrock.EffectiveAPIKeys(),
+				"openrouter":   cfg.OpenRouter.EffectiveAPIKeys(),
+			}
+
+			var enabled []string
+			for provider, keys := range providerKeys {
+				if len(keys) > 0 || len(globalKeys) > 0 {
+					enabled = append(enabled, provider)
+				}
+			}
+
+			if len(enabled) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No enabled providers found.")
+				return nil
+			}
+
+			sort.Strings(enabled)
+
+			var lines []string
+			for _, provider := range enabled {
+				models := cat.ListProviderModels(provider)
+				if len(models) == 0 {
+					continue
+				}
+				ids := make([]string, len(models))
+				for i, m := range models {
+					ids[i] = m.ModelID
+				}
+				sort.Strings(ids)
+				for _, id := range ids {
+					lines = append(lines, fmt.Sprintf("%s/%s", provider, id))
+				}
+			}
+
+			if len(lines) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No models found for enabled providers.")
+				return nil
+			}
+
+			for _, line := range lines {
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
+
+			fmt.Fprintln(cmd.OutOrStdout())
+			fmt.Fprintln(cmd.OutOrStdout(), "Use these model IDs in your config.json file (model_overrides).")
+			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to config file (used to locate the catalog directory)")
+	return cmd
 }
 
 // getConfigDir returns the default configuration directory path.

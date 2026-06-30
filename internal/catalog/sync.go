@@ -50,7 +50,7 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch catalog: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected HTTP status: %d", resp.StatusCode)

@@ -90,7 +90,7 @@ func TestCatalogSyncCmd_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, catalogJSON)
+		_, _ = fmt.Fprint(w, catalogJSON)
 	}))
 	defer server.Close()
 
@@ -173,7 +173,7 @@ func TestServeCatalog_MissingSyncs(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, catalogJSON)
+		_, _ = fmt.Fprint(w, catalogJSON)
 	}))
 	defer server.Close()
 
@@ -216,7 +216,7 @@ func TestServeCatalog_ExpiredSyncs(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, catalogJSON)
+		_, _ = fmt.Fprint(w, catalogJSON)
 	}))
 	defer server.Close()
 

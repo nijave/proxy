@@ -794,6 +794,57 @@ func newStreamingTestHandler(t *testing.T, upstreamURL string) *MessagesHandler 
 	}
 }
 
+func TestHandleMessages_UnknownProvider(t *testing.T) {
+	cfg := &config.Config{
+		APIKey: "test-key",
+		Models: map[string]config.ModelConfig{
+			"default": {Provider: "opencode-go", ModelID: "kimi-k2.6"},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {{Provider: "opencode-go", ModelID: "glm-5"}},
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+	modelRouter := router.NewModelRouter(atomicCfg)
+	tokenCounter, err := token.NewCounter()
+	if err != nil {
+		t.Fatalf("NewCounter: %v", err)
+	}
+
+	handler := NewMessagesHandler(
+		ocClient,
+		nil, // providerRegistry
+		modelRouter,
+		nil, // fallbackHandler
+		tokenCounter,
+		metrics.New(),
+		nil, // captureLogger
+		nil, // hist
+	)
+	handler.logger = slog.Default()
+
+	requestBody := `{
+		"model": "deepseek/deepseek-v4-flash@nonexistent-provider",
+		"max_tokens": 256,
+		"messages": [{"role": "user", "content": "Say hello"}]
+	}`
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.HandleMessages(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, recorder.Code)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "nonexistent-provider") {
+		t.Errorf("expected body to contain provider string, got %q", body)
+	}
+}
+
 func TestHandleMessages_StreamingMinimaxM3_UsesAnthropicEndpoint(t *testing.T) {
 	var capturedBody []byte
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
