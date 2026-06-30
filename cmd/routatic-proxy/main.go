@@ -426,81 +426,128 @@ func checkClaudeEnv(source string, env map[string]string, expectedURL string, an
 // modelsCmd returns the command to list available models.
 func modelsCmd() *cobra.Command {
 	var configPath string
+	var provider string
+
 	cmd := &cobra.Command{
 		Use:   "models",
 		Short: "List available models from the catalog",
+		Long: `List available models from the catalog.
+
+Without a subcommand, all enabled providers are shown. Use "models list" to
+filter by provider with the --provider flag.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if configPath != "" {
-				_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
-			}
-
-			cfgPath := config.ResolveConfigPath()
-			cfg, err := config.LoadFromPath(cfgPath)
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			catalogDir := resolveCatalogDir(cfgPath)
-			catalogPath := filepath.Join(catalogDir, "catalog.json")
-			cat, err := catalog.Load(catalogPath)
-			if err != nil {
-				return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first.")
-			}
-
-			globalKeys := cfg.EffectiveAPIKeys()
-			providerKeys := map[string][]string{
-				"opencode-go":  cfg.OpenCodeGo.EffectiveAPIKeys(),
-				"opencode-zen": cfg.OpenCodeZen.EffectiveAPIKeys(),
-				"aws-bedrock":  cfg.AWSBedrock.EffectiveAPIKeys(),
-				"openrouter":   cfg.OpenRouter.EffectiveAPIKeys(),
-			}
-
-			var enabled []string
-			for provider, keys := range providerKeys {
-				if len(keys) > 0 || len(globalKeys) > 0 {
-					enabled = append(enabled, provider)
-				}
-			}
-
-			if len(enabled) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No enabled providers found.")
-				return nil
-			}
-
-			sort.Strings(enabled)
-
-			var lines []string
-			for _, provider := range enabled {
-				models := cat.ListProviderModels(provider)
-				if len(models) == 0 {
-					continue
-				}
-				ids := make([]string, len(models))
-				for i, m := range models {
-					ids[i] = m.ModelID
-				}
-				sort.Strings(ids)
-				for _, id := range ids {
-					lines = append(lines, fmt.Sprintf("%s/%s", provider, id))
-				}
-			}
-
-			if len(lines) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No models found for enabled providers.")
-				return nil
-			}
-
-			for _, line := range lines {
-				fmt.Fprintln(cmd.OutOrStdout(), line)
-			}
-
-			fmt.Fprintln(cmd.OutOrStdout())
-			fmt.Fprintln(cmd.OutOrStdout(), "Use these model IDs in your config.json file (model_overrides).")
-			return nil
+			return runModelsList(cmd, configPath, provider)
 		},
 	}
-	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to config file (used to locate the catalog directory)")
+
+	cmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to config file (used to locate the catalog directory)")
+	cmd.PersistentFlags().StringVar(&provider, "provider", "", "Filter models by provider")
+
+	cmd.AddCommand(modelsListCmd())
+
 	return cmd
+}
+
+// modelsListCmd returns the "models list" subcommand.
+func modelsListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List available models from the catalog",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			configPath, _ := cmd.Flags().GetString("config")
+			provider, _ := cmd.Flags().GetString("provider")
+			return runModelsList(cmd, configPath, provider)
+		},
+	}
+}
+
+// runModelsList prints models from the catalog, optionally filtered by provider.
+func runModelsList(cmd *cobra.Command, configPath, provider string) error {
+	if configPath != "" {
+		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
+	}
+
+	cfgPath := config.ResolveConfigPath()
+	cfg, err := config.LoadFromPath(cfgPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	catalogDir := resolveCatalogDir(cfgPath)
+	catalogPath := filepath.Join(catalogDir, "catalog.json")
+	cat, err := catalog.Load(catalogPath)
+	if err != nil {
+		return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first.")
+	}
+
+	providers := selectProviders(provider, cfg)
+	if len(providers) == 0 {
+		if provider != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "No models found for provider %q.\n", provider)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "No enabled providers found.")
+		}
+		return nil
+	}
+
+	var lines []string
+	for _, p := range providers {
+		models := cat.ListProviderModels(p)
+		if len(models) == 0 {
+			continue
+		}
+		ids := make([]string, len(models))
+		for i, m := range models {
+			ids[i] = m.ModelID
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			lines = append(lines, fmt.Sprintf("%s/%s", p, id))
+		}
+	}
+
+	if len(lines) == 0 {
+		if provider != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "No models found for provider %q.\n", provider)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "No models found for enabled providers.")
+		}
+		return nil
+	}
+
+	for _, line := range lines {
+		fmt.Fprintln(cmd.OutOrStdout(), line)
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout())
+	fmt.Fprintln(cmd.OutOrStdout(), "Use these model IDs in your config.json file (model_overrides).")
+	return nil
+}
+
+// selectProviders returns the providers to display. If provider is non-empty,
+// only that provider is returned when it exists in the catalog; otherwise all
+// configured (enabled) providers are returned.
+func selectProviders(provider string, cfg *config.Config) []string {
+	if provider != "" {
+		return []string{provider}
+	}
+
+	globalKeys := cfg.EffectiveAPIKeys()
+	providerKeys := map[string][]string{
+		"opencode-go":  cfg.OpenCodeGo.EffectiveAPIKeys(),
+		"opencode-zen": cfg.OpenCodeZen.EffectiveAPIKeys(),
+		"aws-bedrock":  cfg.AWSBedrock.EffectiveAPIKeys(),
+		"openrouter":   cfg.OpenRouter.EffectiveAPIKeys(),
+	}
+
+	var enabled []string
+	for p, keys := range providerKeys {
+		if len(keys) > 0 || len(globalKeys) > 0 {
+			enabled = append(enabled, p)
+		}
+	}
+	sort.Strings(enabled)
+	return enabled
 }
 
 // getConfigDir returns the default configuration directory path.
