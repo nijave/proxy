@@ -9,12 +9,12 @@ import (
 
 func ptr(b bool) *bool { return &b }
 
-func TestBuildProviderIndex_Valid(t *testing.T) {
+func TestIndex_BuildProviderIndex_Valid(t *testing.T) {
 	catalog := Catalog{
 		Providers: map[string]Provider{
-			"openai":   {Name: "openai", Enabled: nil},
+			"openai":    {Name: "openai", Enabled: nil},
 			"anthropic": {Name: "anthropic", Enabled: ptr(true)},
-			"disabled": {Name: "disabled", Enabled: ptr(false)},
+			"disabled":  {Name: "disabled", Enabled: ptr(false)},
 		},
 		Models: map[string]Model{
 			"gpt-4": {
@@ -51,7 +51,7 @@ func TestBuildProviderIndex_Valid(t *testing.T) {
 	}
 }
 
-func TestBuildProviderIndex_NoEnabledProviders(t *testing.T) {
+func TestIndex_NoEnabledProviders(t *testing.T) {
 	catalog := Catalog{
 		Providers: map[string]Provider{
 			"disabled": {Name: "disabled", Enabled: ptr(false)},
@@ -67,7 +67,7 @@ func TestBuildProviderIndex_NoEnabledProviders(t *testing.T) {
 	}
 }
 
-func TestBuildProviderIndex_EmptyModels(t *testing.T) {
+func TestIndex_EmptyModels(t *testing.T) {
 	catalog := Catalog{
 		Providers: map[string]Provider{
 			"openai": {Name: "openai"},
@@ -81,7 +81,7 @@ func TestBuildProviderIndex_EmptyModels(t *testing.T) {
 	}
 }
 
-func TestProviderIndex_WriteAndRead(t *testing.T) {
+func TestIndex_WriteAndRead(t *testing.T) {
 	dir := t.TempDir()
 	idx := &ProviderModelIndex{
 		ProviderModels: map[string][]string{
