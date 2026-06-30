@@ -21,6 +21,8 @@ const (
 	defaultTimeoutMs        = 300000
 	defaultLogLevel         = "info"
 	defaultAnthropicAPIURL  = "https://api.anthropic.com"
+	defaultCatalogMaxAge    = 24
+	defaultCatalogSourceURL = "https://models.dev/catalog.json"
 
 	defaultZenBaseURL          = "https://opencode.ai/zen/v1/chat/completions"
 	defaultZenAnthropicBaseURL = "https://opencode.ai/zen/v1/messages"
@@ -281,6 +283,12 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.ModelOverrides == nil {
 		cfg.ModelOverrides = make(map[string]ModelConfig)
+	}
+	if cfg.Catalog.MaxAgeHours == 0 {
+		cfg.Catalog.MaxAgeHours = defaultCatalogMaxAge
+	}
+	if cfg.Catalog.SourceURL == "" {
+		cfg.Catalog.SourceURL = defaultCatalogSourceURL
 	}
 }
 

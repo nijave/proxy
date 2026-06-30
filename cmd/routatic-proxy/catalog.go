@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/routatic/proxy/internal/catalog"
+	"github.com/routatic/proxy/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -69,4 +72,32 @@ func resolveCatalogDir(configPath string) string {
 		return filepath.Join(".config", "routatic-proxy", "catalog")
 	}
 	return filepath.Join(home, ".config", "routatic-proxy", "catalog")
+}
+
+// ensureCatalogSynced checks whether the local models.dev catalog is present
+// and fresh. If the lock file is missing, corrupted, or expired relative to the
+// configured max_age_hours, it re-downloads the catalog from cfg.Catalog.SourceURL.
+// The now parameter makes expiry deterministic in tests.
+func ensureCatalogSynced(cfg *config.Config, configPath string, now time.Time) error {
+	if cfg.Catalog.Enabled != nil && !*cfg.Catalog.Enabled {
+		slog.Info("catalog sync disabled, skipping")
+		return nil
+	}
+
+	catalogDir := resolveCatalogDir(configPath)
+	lock, err := catalog.ReadLock(catalogDir)
+	if err != nil {
+		slog.Info("catalog lock missing or unreadable, syncing", "catalog_dir", catalogDir, "error", err)
+		_, err = catalog.Sync(cfg.Catalog.SourceURL, catalogDir)
+		return err
+	}
+
+	if lock.Expired(now) {
+		slog.Info("catalog lock expired, syncing", "catalog_dir", catalogDir, "synced_at", lock.SyncedAt)
+		_, err = catalog.Sync(cfg.Catalog.SourceURL, catalogDir)
+		return err
+	}
+
+	slog.Debug("catalog lock fresh, skipping sync", "catalog_dir", catalogDir, "synced_at", lock.SyncedAt)
+	return nil
 }

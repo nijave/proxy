@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/daemon"
@@ -86,6 +87,10 @@ func serveCmd() *cobra.Command {
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			if err := ensureCatalogSynced(cfg, configPath, time.Now().UTC()); err != nil {
+				return fmt.Errorf("failed to sync catalog: %w", err)
 			}
 
 			var captureLogger *debug.CaptureLogger

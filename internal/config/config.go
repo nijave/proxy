@@ -21,12 +21,20 @@ type Config struct {
 	AnthropicFirst                 AnthropicFirstConfig     `json:"anthropic_first"`
 	Logging                        LoggingConfig            `json:"logging"`
 	Debug                          DebugConfig              `json:"debug"`
+	Catalog                        CatalogConfig            `json:"catalog"`
 }
 
 // AnthropicFirstConfig controls direct Anthropic passthrough with OpenCode fallback.
 type AnthropicFirstConfig struct {
 	Enabled bool   `json:"enabled"`
 	BaseURL string `json:"base_url"`
+}
+
+// CatalogConfig controls automatic syncing of the models.dev catalog.
+type CatalogConfig struct {
+	MaxAgeHours int    `json:"max_age_hours"`
+	SourceURL   string `json:"source_url"`
+	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
 // DebugConfig holds debug-related configuration.
