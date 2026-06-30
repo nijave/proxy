@@ -48,6 +48,7 @@ type DebugConfig struct {
 type ModelConfig struct {
 	Provider               string          `json:"provider"`
 	ModelID                string          `json:"model_id"`
+	ModelRef               string          `json:"model_ref,omitempty"`
 	WireFormat             string          `json:"wire_format,omitempty"` // "auto" (default), "openai", "anthropic", "responses", "gemini"
 	Temperature            float64         `json:"temperature"`
 	MaxTokens              int             `json:"max_tokens"`

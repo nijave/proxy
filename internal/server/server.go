@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -58,7 +59,7 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	metrics := metrics.New()
 
 	openCodeClient := client.NewOpenCodeClient(atomic, captureLogger)
-	modelRouter := router.NewModelRouter(atomic)
+	modelRouter := router.NewModelRouterWithCatalog(atomic, filepath.Join(filepath.Dir(atomic.Path()), "catalog", "catalog.json"))
 	fallbackHandler := router.NewFallbackHandler(logger, 3, 30*time.Second)
 
 	// Register providers.

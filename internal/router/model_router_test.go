@@ -1,12 +1,79 @@
 package router
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 )
 
 func boolPtr(b bool) *bool { return &b }
+
+func writeTestCatalog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	data := []byte(`{
+  "providers": {
+    "opencode-go": {
+      "name": "opencode-go",
+      "base_url": "https://go.opencode.ai",
+      "api_key": "",
+      "enabled": true,
+      "anthropic_tools_disabled": false
+    },
+    "openrouter": {
+      "name": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "",
+      "enabled": true,
+      "anthropic_tools_disabled": false
+    }
+  },
+  "models": {
+    "deepseek-v4-flash": {
+      "name": "deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash",
+      "providers": ["opencode-go"],
+      "context_window": 1000000,
+      "cost_input_per_m": 0.0,
+      "cost_output_per_m": 0.0,
+      "tools": true,
+      "vision": false,
+      "reasoning": false
+    },
+    "kimi-k2.6": {
+      "name": "kimi-k2.6",
+      "display_name": "Kimi K2.6",
+      "providers": ["opencode-go", "openrouter"],
+      "context_window": 256000,
+      "cost_input_per_m": 0.0,
+      "cost_output_per_m": 0.0,
+      "tools": true,
+      "vision": true,
+      "reasoning": false
+    },
+    "glm-5": {
+      "name": "glm-5",
+      "display_name": "GLM 5",
+      "providers": ["opencode-go"],
+      "context_window": 200000,
+      "cost_input_per_m": 0.0,
+      "cost_output_per_m": 0.0,
+      "tools": true,
+      "vision": false,
+      "reasoning": false
+    }
+  },
+  "scenarios": {}
+}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("failed to write test catalog: %v", err)
+	}
+	return path
+}
 
 func newTestAtomicConfig(cfg *config.Config) *config.AtomicConfig {
 	return config.NewAtomicConfig(cfg, "/tmp/test-config.json")
@@ -359,5 +426,114 @@ func TestRouteWithOverride_NoFallbacksAnywhere(t *testing.T) {
 	chain := result.GetModelChain()
 	if len(chain) != 1 {
 		t.Errorf("expected 1-element chain, got %d", len(chain))
+	}
+}
+
+func TestResolveRequestedModel(t *testing.T) {
+	catalogPath := writeTestCatalog(t)
+	// Verify the fixture loads so the test failures are not misleading.
+	if _, err := catalog.Load(catalogPath); err != nil {
+		t.Fatalf("test catalog fixture is invalid: %v", err)
+	}
+
+	cfg := &config.Config{
+		RespectRequestedModel: boolPtr(true),
+		Models: map[string]config.ModelConfig{
+			"default": {
+				Provider:    "opencode-go",
+				ModelID:     "kimi-k2.6",
+				Temperature: 0.5,
+				MaxTokens:   8192,
+			},
+			"custom-model": {
+				Provider:    "opencode-go",
+				ModelID:     "custom-model",
+				Temperature: 0.3,
+				MaxTokens:   2048,
+			},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {{Provider: "opencode-go", ModelID: "qwen3.5-plus"}},
+		},
+	}
+	atomic := newTestAtomicConfig(cfg)
+
+	tests := []struct {
+		name           string
+		requestedModel string
+		needsVision    bool
+		catalogPath    string
+		wantProvider   string
+		wantModelID    string
+		wantModelRef   string
+		wantErr        bool
+	}{
+		{
+			name:           "lab/model@provider resolves through catalog",
+			requestedModel: "deepseek/deepseek-v4-flash@opencode-go",
+			catalogPath:    catalogPath,
+			wantProvider:   "opencode-go",
+			wantModelID:    "deepseek-v4-flash",
+			wantModelRef:   "deepseek/deepseek-v4-flash@opencode-go",
+		},
+		{
+			name:           "short id resolves through catalog",
+			requestedModel: "kimi-k2.6",
+			catalogPath:    catalogPath,
+			wantProvider:   "opencode-go",
+			wantModelID:    "kimi-k2.6",
+			wantModelRef:   "kimi-k2.6",
+		},
+		{
+			name:           "config model takes precedence over catalog",
+			requestedModel: "custom-model",
+			catalogPath:    catalogPath,
+			wantProvider:   "opencode-go",
+			wantModelID:    "custom-model",
+			wantModelRef:   "",
+		},
+		{
+			name:           "unknown model without catalog uses legacy fallback",
+			requestedModel: "some-unknown-model",
+			catalogPath:    "",
+			wantProvider:   "opencode-go",
+			wantModelID:    "some-unknown-model",
+			wantModelRef:   "",
+		},
+		{
+			name:           "vision request for non-vision catalog model returns error",
+			requestedModel: "glm-5",
+			needsVision:    true,
+			catalogPath:    catalogPath,
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewModelRouterWithCatalog(atomic, tt.catalogPath)
+			result, ok, err := router.resolveRequestedModel(cfg, tt.requestedModel, tt.needsVision)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !ok {
+				t.Fatalf("expected resolveRequestedModel to match")
+			}
+			if result.Primary.Provider != tt.wantProvider {
+				t.Errorf("expected provider %q, got %q", tt.wantProvider, result.Primary.Provider)
+			}
+			if result.Primary.ModelID != tt.wantModelID {
+				t.Errorf("expected model_id %q, got %q", tt.wantModelID, result.Primary.ModelID)
+			}
+			if result.Primary.ModelRef != tt.wantModelRef {
+				t.Errorf("expected model_ref %q, got %q", tt.wantModelRef, result.Primary.ModelRef)
+			}
+		})
 	}
 }

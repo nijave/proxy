@@ -4,18 +4,49 @@ package router
 
 import (
 	"fmt"
+	"sync"
 
+	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 )
 
 // ModelRouter handles model selection based on scenarios.
 type ModelRouter struct {
-	atomic *config.AtomicConfig
+	atomic      *config.AtomicConfig
+	catalogPath string
+	catMu       sync.Mutex
+	cat         *catalog.IndexedCatalog
+	catErr      error
 }
 
 // NewModelRouter creates a new model router.
 func NewModelRouter(atomic *config.AtomicConfig) *ModelRouter {
 	return &ModelRouter{atomic: atomic}
+}
+
+// NewModelRouterWithCatalog creates a new model router that resolves model
+// references and short ids through a catalog file when a model is not present
+// in the legacy config map.
+func NewModelRouterWithCatalog(atomic *config.AtomicConfig, catalogPath string) *ModelRouter {
+	return &ModelRouter{atomic: atomic, catalogPath: catalogPath}
+}
+
+// catalog lazily loads and caches the indexed catalog. If no catalog path is
+// configured it returns (nil, nil) so that legacy behavior is preserved.
+func (r *ModelRouter) catalog() (*catalog.IndexedCatalog, error) {
+	if r.catalogPath == "" {
+		return nil, nil
+	}
+
+	r.catMu.Lock()
+	defer r.catMu.Unlock()
+
+	if r.cat != nil || r.catErr != nil {
+		return r.cat, r.catErr
+	}
+
+	r.cat, r.catErr = catalog.Load(r.catalogPath)
+	return r.cat, r.catErr
 }
 
 // isRespectRequestedModel returns true when the client-specified model should be
@@ -46,14 +77,17 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 	// Look up the requested model in config to inherit its settings
 	primary, ok := cfg.Models[requestedModel]
 	if !ok {
-		// Unknown model — create a bare config and inherit defaults
-		primary = config.ModelConfig{
-			Provider: "opencode-go",
-			ModelID:  requestedModel,
-		}
-		if def, ok := cfg.Models["default"]; ok {
-			primary.Temperature = def.Temperature
-			primary.MaxTokens = def.MaxTokens
+		// Not in legacy config — try the catalog before falling back to the
+		// legacy unknown-model behavior.
+		cat, _ := r.catalog()
+		if cat != nil {
+			if catalogPrimary, catalogOk := r.resolveFromCatalog(cat, requestedModel); catalogOk {
+				primary = catalogPrimary
+			} else {
+				primary = r.legacyUnknownModelConfig(cfg, requestedModel)
+			}
+		} else {
+			primary = r.legacyUnknownModelConfig(cfg, requestedModel)
 		}
 	}
 	primary = config.ResolveModelConfig(primary)
@@ -68,6 +102,49 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 		Fallbacks: fallbacks,
 		Scenario:  ScenarioDefault,
 	}, true, nil
+}
+
+// resolveFromCatalog attempts to resolve a requested model string through the
+// catalog. It returns the model config and true on success, otherwise false.
+func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedModel string) (config.ModelConfig, bool) {
+	sel, err := catalog.ParseModelRef(requestedModel)
+	if err != nil {
+		return config.ModelConfig{}, false
+	}
+
+	var resolved catalog.ResolvedModel
+	if sel.Provider != "" {
+		resolved, err = cat.Resolve(sel)
+	} else {
+		resolved, err = cat.ResolveShort(requestedModel)
+	}
+	if err != nil {
+		return config.ModelConfig{}, false
+	}
+
+	supportsTools := resolved.Tools
+	return config.ModelConfig{
+		Provider:      resolved.Provider,
+		ModelID:       resolved.ModelID,
+		ModelRef:      requestedModel,
+		Vision:        resolved.Vision,
+		ContextWindow: int(resolved.ContextWindow),
+		SupportsTools: &supportsTools,
+	}, true
+}
+
+// legacyUnknownModelConfig builds a bare config for an unknown model and
+// inherits Temperature and MaxTokens from the default model when available.
+func (r *ModelRouter) legacyUnknownModelConfig(cfg *config.Config, requestedModel string) config.ModelConfig {
+	primary := config.ModelConfig{
+		Provider: "opencode-go",
+		ModelID:  requestedModel,
+	}
+	if def, ok := cfg.Models["default"]; ok {
+		primary.Temperature = def.Temperature
+		primary.MaxTokens = def.MaxTokens
+	}
+	return primary
 }
 
 // Route determines which model to use for a request.
