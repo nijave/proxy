@@ -46,7 +46,8 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+    client := &http.Client{Timeout: 30 * time.Second}
+    resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch catalog: %w", err)
 	}
