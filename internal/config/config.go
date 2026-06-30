@@ -11,6 +11,7 @@ type Config struct {
 	Port                           int                      `json:"port"`
 	HotReload                      bool                     `json:"hot_reload"`
 	EnableStreamingScenarioRouting bool                     `json:"enable_streaming_scenario_routing"`
+	EnableCostBasedRouting         bool                     `json:"enable_cost_based_routing"`
 	RespectRequestedModel          *bool                    `json:"respect_requested_model,omitempty"`
 	Models                         map[string]ModelConfig   `json:"models"`
 	Fallbacks                      map[string][]ModelConfig `json:"fallbacks"`

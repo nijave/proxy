@@ -5,6 +5,7 @@ package router
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/routatic/proxy/internal/catalog"
@@ -118,6 +119,59 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 	}, true, nil
 }
 
+// resolvedModelToConfig converts a catalog resolved model into a runtime
+// ModelConfig used by the router.
+func resolvedModelToConfig(resolved catalog.ResolvedModel) config.ModelConfig {
+	supportsTools := resolved.Tools
+	return config.ModelConfig{
+		Provider:      resolved.Provider,
+		ModelID:       resolved.ModelID,
+		ModelRef:      resolved.CanonicalName,
+		Vision:        resolved.Vision,
+		ContextWindow: int(resolved.ContextWindow),
+		SupportsTools: &supportsTools,
+	}
+}
+
+// requestConstraints maps request-level requirements to scenario constraints
+// used by the cost-based selector.
+func requestConstraints(messages []MessageContent, tokenCount int) ScenarioConstraints {
+	facts := AnalyzeRequestFacts(messages)
+	constraints := ScenarioConstraints{
+		Vision:  facts.NeedsVision,
+		Context: int64(tokenCount),
+	}
+	latest := latestUserMessages(messages)
+	if hasThinkingPattern(latest) {
+		constraints.Reasoning = true
+	}
+	if hasToolUsage(messages) {
+		constraints.Tools = true
+	}
+	return constraints
+}
+
+// hasToolUsage reports whether the request likely requires tool support based
+// on message roles or tool-related keywords.
+func hasToolUsage(messages []MessageContent) bool {
+	toolKeywords := []string{
+		"tool", "function", "execute", "run command",
+		"bash", "shell", "python",
+	}
+	for _, msg := range messages {
+		if msg.Role == "tool" || msg.Role == "function" {
+			return true
+		}
+		lower := strings.ToLower(msg.Content)
+		for _, kw := range toolKeywords {
+			if strings.Contains(lower, kw) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // resolveFromCatalog attempts to resolve a requested model string through the
 // catalog. It returns the model config and true on success, otherwise false.
 func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedModel string, sel catalog.Selector) (config.ModelConfig, bool) {
@@ -132,15 +186,9 @@ func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedM
 		return config.ModelConfig{}, false
 	}
 
-	supportsTools := resolved.Tools
-	return config.ModelConfig{
-		Provider:      resolved.Provider,
-		ModelID:       resolved.ModelID,
-		ModelRef:      requestedModel,
-		Vision:        resolved.Vision,
-		ContextWindow: int(resolved.ContextWindow),
-		SupportsTools: &supportsTools,
-	}, true
+	cfg := resolvedModelToConfig(resolved)
+	cfg.ModelRef = requestedModel
+	return cfg, true
 }
 
 // legacyUnknownModelConfig builds a bare config for an unknown model and
@@ -171,9 +219,21 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 
 	// Otherwise, use scenario-based routing
 	result := DetectScenario(messages, tokenCount, cfg)
+	scenarioKey := string(result.Scenario)
 
-	// Get primary model for scenario
-	primary, ok := cfg.Models[string(result.Scenario)]
+	// Get primary model for scenario. When cost-based routing is enabled and
+	// a non-empty catalog is available, prefer the cheapest matching catalog
+	// model while preserving the legacy fallback chain.
+	primary, ok := cfg.Models[scenarioKey]
+	if cat, catErr := r.catalog(); cfg.EnableCostBasedRouting && cat != nil && catErr == nil && len(cat.Models) > 0 {
+		constraints := requestConstraints(messages, tokenCount)
+		selector := NewSelector(cat, cfg)
+		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
+			primary = resolvedModelToConfig(resolved)
+			ok = true
+		}
+	}
+
 	if !ok {
 		if isVisionScenario(result.Scenario) {
 			return RouteResult{}, fmt.Errorf("vision scenario %s is not configured", result.Scenario)
@@ -186,7 +246,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 	}
 
 	// Get fallbacks for scenario
-	fallbacks := cfg.Fallbacks[string(result.Scenario)]
+	fallbacks := cfg.Fallbacks[scenarioKey]
 	if len(fallbacks) == 0 {
 		if isVisionScenario(result.Scenario) {
 			return RouteResult{}, fmt.Errorf("vision scenario %s has no configured vision fallbacks", result.Scenario)
@@ -259,9 +319,20 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 
 	// Otherwise, use scenario-based routing for streaming
 	result := RouteForStreaming(messages, tokenCount, cfg)
+	scenarioKey := string(result.Scenario)
 
-	// Get primary model for scenario
-	primary, ok := cfg.Models[string(result.Scenario)]
+	// Get primary model for scenario. When cost-based routing is enabled and
+	// a non-empty catalog is available, prefer the cheapest matching catalog
+	// model while preserving the legacy fallback chain.
+	primary, ok := cfg.Models[scenarioKey]
+	if cat, catErr := r.catalog(); cfg.EnableCostBasedRouting && cat != nil && catErr == nil && len(cat.Models) > 0 {
+		constraints := requestConstraints(messages, tokenCount)
+		selector := NewSelector(cat, cfg)
+		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
+			primary = resolvedModelToConfig(resolved)
+			ok = true
+		}
+	}
 	if !ok {
 		if isVisionScenario(result.Scenario) {
 			return RouteResult{Scenario: result.Scenario}, fmt.Errorf("vision scenario %s is not configured", result.Scenario)
@@ -278,7 +349,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 	}
 
 	// Get fallbacks for scenario
-	fallbacks := cfg.Fallbacks[string(result.Scenario)]
+	fallbacks := cfg.Fallbacks[scenarioKey]
 	if len(fallbacks) == 0 {
 		if isVisionScenario(result.Scenario) {
 			fallbacks = nil
