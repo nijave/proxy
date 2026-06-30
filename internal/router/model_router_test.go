@@ -1,6 +1,7 @@
 package router
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +59,7 @@ func writeTestCatalog(t *testing.T) string {
     "glm-5": {
       "name": "glm-5",
       "display_name": "GLM 5",
-      "providers": ["opencode-go"],
+      "providers": ["opencode-go", "openrouter"],
       "context_window": 200000,
       "cost_input_per_m": 0.0,
       "cost_output_per_m": 0.0,
@@ -429,6 +430,52 @@ func TestRouteWithOverride_NoFallbacksAnywhere(t *testing.T) {
 	}
 }
 
+func TestUnknownProvider(t *testing.T) {
+	catalogPath := writeTestCatalog(t)
+	cfg := &config.Config{
+		RespectRequestedModel: boolPtr(true),
+		Models: map[string]config.ModelConfig{
+			"default": {
+				Provider:    "opencode-go",
+				ModelID:     "kimi-k2.6",
+				Temperature: 0.5,
+				MaxTokens:   8192,
+			},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {{Provider: "opencode-go", ModelID: "qwen3.5-plus"}},
+		},
+	}
+	atomic := newTestAtomicConfig(cfg)
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	t.Run("unknown provider in canonical reference returns ErrUnknownProvider", func(t *testing.T) {
+		_, _, err := router.resolveRequestedModel(cfg, "deepseek/deepseek-v4-flash@nonexistent-provider", false)
+		if err == nil {
+			t.Fatal("expected error for unknown provider, got nil")
+		}
+		if !errors.Is(err, ErrUnknownProvider) {
+			t.Fatalf("expected error to wrap ErrUnknownProvider, got %v", err)
+		}
+	})
+
+	t.Run("unknown short id falls back silently to opencode-go", func(t *testing.T) {
+		result, ok, err := router.resolveRequestedModel(cfg, "totally-unknown-short-id", false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ok {
+			t.Fatal("expected resolveRequestedModel to match")
+		}
+		if result.Primary.Provider != "opencode-go" {
+			t.Errorf("expected provider opencode-go, got %q", result.Primary.Provider)
+		}
+		if result.Primary.ModelID != "totally-unknown-short-id" {
+			t.Errorf("expected model_id totally-unknown-short-id, got %q", result.Primary.ModelID)
+		}
+	})
+}
+
 func TestResolveRequestedModel(t *testing.T) {
 	catalogPath := writeTestCatalog(t)
 	// Verify the fixture loads so the test failures are not misleading.
@@ -536,4 +583,232 @@ func TestResolveRequestedModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRoute_CanonicalAndShortRefs(t *testing.T) {
+	catalogPath := writeTestCatalog(t)
+
+	cfg := &config.Config{
+		RespectRequestedModel: boolPtr(true),
+		Models: map[string]config.ModelConfig{
+			"default": {
+				Provider:    "opencode-go",
+				ModelID:     "kimi-k2.6",
+				Temperature: 0.5,
+				MaxTokens:   8192,
+			},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {
+				{Provider: "opencode-go", ModelID: "qwen3.5-plus"},
+			},
+		},
+	}
+	atomic := newTestAtomicConfig(cfg)
+
+	tests := []struct {
+		name         string
+		requested    string
+		wantProvider string
+		wantModelID  string
+		wantModelRef string
+	}{
+		{
+			name:         "canonical lab/model@provider",
+			requested:    "deepseek/deepseek-v4-flash@opencode-go",
+			wantProvider: "opencode-go",
+			wantModelID:  "deepseek-v4-flash",
+			wantModelRef: "deepseek/deepseek-v4-flash@opencode-go",
+		},
+		{
+			name:         "short id resolves to first enabled provider",
+			requested:    "kimi-k2.6",
+			wantProvider: "opencode-go",
+			wantModelID:  "kimi-k2.6",
+			wantModelRef: "kimi-k2.6",
+		},
+		{
+			name:         "short id with explicit provider",
+			requested:    "kimi-k2.6@openrouter",
+			wantProvider: "openrouter",
+			wantModelID:  "kimi-k2.6",
+			wantModelRef: "kimi-k2.6@openrouter",
+		},
+		{
+			name:         "provider-qualified short id",
+			requested:    "glm-5@openrouter",
+			wantProvider: "openrouter",
+			wantModelID:  "glm-5",
+			wantModelRef: "glm-5@openrouter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := NewModelRouterWithCatalog(atomic, catalogPath)
+			result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, tt.requested)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Scenario != ScenarioDefault {
+				t.Errorf("expected scenario %q, got %q", ScenarioDefault, result.Scenario)
+			}
+			if result.Primary.Provider != tt.wantProvider {
+				t.Errorf("expected provider %q, got %q", tt.wantProvider, result.Primary.Provider)
+			}
+			if result.Primary.ModelID != tt.wantModelID {
+				t.Errorf("expected model_id %q, got %q", tt.wantModelID, result.Primary.ModelID)
+			}
+			if result.Primary.ModelRef != tt.wantModelRef {
+				t.Errorf("expected model_ref %q, got %q", tt.wantModelRef, result.Primary.ModelRef)
+			}
+		})
+	}
+}
+
+func TestRoute_ModelOverridesPrecedence(t *testing.T) {
+	catalogPath := writeTestCatalog(t)
+
+	cfg := &config.Config{
+		ModelOverrides: map[string]config.ModelConfig{
+			"deepseek/deepseek-v4-flash@opencode-go": {
+				Provider:    "opencode-zen",
+				ModelID:     "claude-sonnet-4.5",
+				Temperature: 0.2,
+				MaxTokens:   4096,
+			},
+			"kimi-k2.6": {
+				Provider:    "openrouter",
+				ModelID:     "kimi-k2.6-or",
+				Temperature: 0.1,
+				MaxTokens:   1024,
+			},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {
+				{Provider: "opencode-go", ModelID: "qwen3.5-plus"},
+			},
+		},
+	}
+	atomic := newTestAtomicConfig(cfg)
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	tests := []struct {
+		name         string
+		requested    string
+		wantMatch    bool
+		wantModelID  string
+		wantProvider string
+	}{
+		{
+			name:         "canonical override key matches",
+			requested:    "deepseek/deepseek-v4-flash@opencode-go",
+			wantMatch:    true,
+			wantModelID:  "claude-sonnet-4.5",
+			wantProvider: "opencode-zen",
+		},
+		{
+			name:         "short override key matches",
+			requested:    "kimi-k2.6",
+			wantMatch:    true,
+			wantModelID:  "kimi-k2.6-or",
+			wantProvider: "openrouter",
+		},
+		{
+			name:      "unrelated canonical ref does not match",
+			requested: "kimi-k2.6@openrouter",
+			wantMatch: false,
+		},
+		{
+			name:      "unrelated short id does not match",
+			requested: "glm-5",
+			wantMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := router.RouteWithOverride(tt.requested)
+			if ok != tt.wantMatch {
+				t.Fatalf("expected match=%v, got %v", tt.wantMatch, ok)
+			}
+			if !tt.wantMatch {
+				return
+			}
+			if result.Scenario != ScenarioOverride {
+				t.Errorf("expected scenario %q, got %q", ScenarioOverride, result.Scenario)
+			}
+			if result.Primary.ModelID != tt.wantModelID {
+				t.Errorf("expected model_id %q, got %q", tt.wantModelID, result.Primary.ModelID)
+			}
+			if result.Primary.Provider != tt.wantProvider {
+				t.Errorf("expected provider %q, got %q", tt.wantProvider, result.Primary.Provider)
+			}
+		})
+	}
+}
+
+func TestRoute_LegacyConfigFixtures(t *testing.T) {
+	t.Run("example config fixture", func(t *testing.T) {
+		t.Setenv("ROUTATIC_PROXY_API_KEY", "test-key")
+
+		cfg, err := config.LoadFromPath("/Users/mac/Dev/routatic/proxy/configs/config.example.json")
+		if err != nil {
+			t.Fatalf("failed to load example config: %v", err)
+		}
+		atomic := config.NewAtomicConfig(cfg, "/Users/mac/Dev/routatic/proxy/configs/config.example.json")
+		router := NewModelRouter(atomic)
+
+		messages := []MessageContent{{Role: "user", Content: "Hello"}}
+
+		result, err := router.Route(messages, 100, "")
+		if err != nil {
+			t.Fatalf("Route failed: %v", err)
+		}
+		if result.Primary.ModelID != "deepseek-v4-pro" {
+			t.Errorf("expected primary deepseek-v4-pro, got %s", result.Primary.ModelID)
+		}
+
+		streamResult, err := router.RouteForStreaming(messages, 100, "")
+		if err != nil {
+			t.Fatalf("RouteForStreaming failed: %v", err)
+		}
+		if streamResult.Primary.ModelID != "deepseek-v4-flash" {
+			t.Errorf("expected streaming primary deepseek-v4-flash, got %s", streamResult.Primary.ModelID)
+		}
+	})
+
+	t.Run("inline legacy fixture", func(t *testing.T) {
+		cfg := &config.Config{
+			RespectRequestedModel: boolPtr(false),
+			Models: map[string]config.ModelConfig{
+				"default": {Provider: "opencode-go", ModelID: "kimi-k2.6"},
+				"fast":    {Provider: "opencode-go", ModelID: "qwen3.5-plus"},
+			},
+			Fallbacks: map[string][]config.ModelConfig{
+				"default": {{Provider: "opencode-go", ModelID: "glm-5.1"}},
+				"fast":    {{Provider: "opencode-go", ModelID: "deepseek-v4-flash"}},
+			},
+		}
+		atomic := newTestAtomicConfig(cfg)
+		router := NewModelRouter(atomic)
+
+		messages := []MessageContent{{Role: "user", Content: "Hello"}}
+
+		result, err := router.Route(messages, 100, "")
+		if err != nil {
+			t.Fatalf("Route failed: %v", err)
+		}
+		if result.Primary.ModelID != "kimi-k2.6" {
+			t.Errorf("expected primary kimi-k2.6, got %s", result.Primary.ModelID)
+		}
+
+		streamResult, err := router.RouteForStreaming(messages, 100, "")
+		if err != nil {
+			t.Fatalf("RouteForStreaming failed: %v", err)
+		}
+		if streamResult.Primary.ModelID != "qwen3.5-plus" {
+			t.Errorf("expected streaming primary qwen3.5-plus, got %s", streamResult.Primary.ModelID)
+		}
+	})
 }

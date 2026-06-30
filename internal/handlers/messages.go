@@ -340,7 +340,13 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 	needsTools := len(anthropicReq.Tools) > 0
 	modelChain, routeResult, err := h.buildModelChain(anthropicReq.Model, routerMessages, tokenCount, isStreaming, anthropicReq.MaxTokens, facts.NeedsVision, needsTools)
 	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "routing failed", err)
+		status := http.StatusInternalServerError
+		message := "routing failed"
+		if errors.Is(err, router.ErrUnknownProvider) {
+			status = http.StatusBadRequest
+			message = err.Error()
+		}
+		h.sendError(w, status, message, err)
 		return
 	}
 

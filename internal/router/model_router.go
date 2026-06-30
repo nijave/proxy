@@ -3,12 +3,17 @@
 package router
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 )
+
+// ErrUnknownProvider is returned when a provider-qualified model reference
+// cannot be resolved because the named provider is not configured.
+var ErrUnknownProvider = errors.New("unknown provider")
 
 // ModelRouter handles model selection based on scenarios.
 type ModelRouter struct {
@@ -78,14 +83,23 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 	primary, ok := cfg.Models[requestedModel]
 	if !ok {
 		// Not in legacy config — try the catalog before falling back to the
-		// legacy unknown-model behavior.
+		// legacy unknown-model behavior. Provider-qualified references that
+		// fail catalog resolution are rejected with a clear error instead of
+		// silently falling back to a bogus provider.
+		sel, parseErr := catalog.ParseModelRef(requestedModel)
+		providerQualified := parseErr == nil && sel.Provider != ""
+
 		cat, _ := r.catalog()
 		if cat != nil {
-			if catalogPrimary, catalogOk := r.resolveFromCatalog(cat, requestedModel); catalogOk {
+			if catalogPrimary, catalogOk := r.resolveFromCatalog(cat, requestedModel, sel); catalogOk {
 				primary = catalogPrimary
+			} else if providerQualified {
+				return RouteResult{}, false, fmt.Errorf("model reference %q uses unknown provider %q: %w", requestedModel, sel.Provider, ErrUnknownProvider)
 			} else {
 				primary = r.legacyUnknownModelConfig(cfg, requestedModel)
 			}
+		} else if providerQualified {
+			return RouteResult{}, false, fmt.Errorf("model reference %q uses unknown provider %q: %w", requestedModel, sel.Provider, ErrUnknownProvider)
 		} else {
 			primary = r.legacyUnknownModelConfig(cfg, requestedModel)
 		}
@@ -106,13 +120,9 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 
 // resolveFromCatalog attempts to resolve a requested model string through the
 // catalog. It returns the model config and true on success, otherwise false.
-func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedModel string) (config.ModelConfig, bool) {
-	sel, err := catalog.ParseModelRef(requestedModel)
-	if err != nil {
-		return config.ModelConfig{}, false
-	}
-
+func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedModel string, sel catalog.Selector) (config.ModelConfig, bool) {
 	var resolved catalog.ResolvedModel
+	var err error
 	if sel.Provider != "" {
 		resolved, err = cat.Resolve(sel)
 	} else {
@@ -241,7 +251,9 @@ func (rr *RouteResult) GetModelChain() []config.ModelConfig {
 func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount int, requestedModel string) (RouteResult, error) {
 	cfg := r.atomic.Get()
 
-	if result, ok, err := r.resolveRequestedModel(cfg, requestedModel, false); err == nil && ok {
+	if result, ok, err := r.resolveRequestedModel(cfg, requestedModel, false); err != nil {
+		return RouteResult{}, err
+	} else if ok {
 		return result, nil
 	}
 
