@@ -48,6 +48,7 @@ Legacy ~/.config/oc-go-cc/config.json and OC_GO_CC_* environment variables are s
 	rootCmd.AddCommand(validateCmd())
 	rootCmd.AddCommand(checkCmd())
 	rootCmd.AddCommand(modelsCmd())
+	rootCmd.AddCommand(catalogCmd())
 	rootCmd.AddCommand(autostartCmd())
 	rootCmd.AddCommand(updateCmd())
 	addPlatformCommands(rootCmd)
