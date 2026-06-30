@@ -32,6 +32,9 @@ const TRANSLATIONS = {
     'setting.notifyDesc': 'Notify on failures or model switches',
     'setting.language': 'Language',
     'setting.languageDesc': 'Switch interface language',
+    'setting.catalog': 'Catalog',
+    'setting.catalogNotSynced': 'Catalog not synced',
+    'setting.catalogAge': 'Last synced: {age}',
     'section.proxyConfig': 'Proxy Configuration',
     'placeholder.envOrEmpty': 'Use env var or leave empty',
     'placeholder.notSet': 'Not configured',
@@ -39,6 +42,7 @@ const TRANSLATIONS = {
     'label.host': 'Listen Address (Host)',
     'label.port': 'Listen Port (Port)',
     'btn.save': 'Save & Apply Config',
+    'btn.refreshCatalog': 'Refresh catalog',
     'status.saving': 'Saving…',
     'status.saveOk': 'Config saved successfully!',
     'status.saveFail': 'Save failed: ',
@@ -82,6 +86,9 @@ const TRANSLATIONS = {
     'setting.notifyDesc': '请求失败或切换模型时发送系统通知',
     'setting.language': '语言',
     'setting.languageDesc': '切换界面语言',
+    'setting.catalog': '模型目录',
+    'setting.catalogNotSynced': '模型目录未同步',
+    'setting.catalogAge': '上次同步：{age}',
     'section.proxyConfig': '服务代理配置',
     'placeholder.envOrEmpty': '使用环境变量或留空',
     'placeholder.notSet': '未配置',
@@ -89,6 +96,7 @@ const TRANSLATIONS = {
     'label.host': '监听地址 (Host)',
     'label.port': '监听端口 (Port)',
     'btn.save': '保存并应用配置',
+    'btn.refreshCatalog': '刷新模型目录',
     'status.saving': '保存中…',
     'status.saveOk': '配置保存并应用成功！',
     'status.saveFail': '保存失败: ',
@@ -164,7 +172,7 @@ function startPolling() {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshMetrics(), refreshHistory(), refreshConfig()]);
+  await Promise.all([refreshMetrics(), refreshHistory(), refreshConfig(), refreshCatalogAge()]);
 }
 
 // Debounced refresh for manual triggers (keyboard shortcuts)
@@ -335,6 +343,46 @@ async function refreshConfig() {
   } catch(e) {}
 }
 
+/* ── /api/catalog/lock & /api/catalog/sync ─────────────────────── */
+async function refreshCatalogAge() {
+  try {
+    const r = await fetch('/api/catalog/lock');
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('catalog-age');
+    if (!el) return;
+    if (!d.synced) {
+      el.textContent = t('setting.catalogNotSynced');
+      return;
+    }
+    el.textContent = t('setting.catalogAge').replace('{age}', fmtAge(d.age_seconds));
+  } catch(e) {}
+}
+
+async function refreshCatalog() {
+  const btn = document.getElementById('btn-refresh-catalog');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = currentLang === 'zh' ? '同步中…' : 'Syncing…';
+  }
+  try {
+    const r = await fetch('/api/catalog/sync', { method: 'POST' });
+    if (r.ok) {
+      await refreshCatalogAge();
+    } else {
+      const txt = await r.text();
+      console.error('Catalog refresh failed:', txt);
+    }
+  } catch(e) {
+    console.error('Catalog refresh network error:', e);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = t('btn.refreshCatalog');
+    }
+  }
+}
+
 /* ── Toggle actions ────────────────────────────────────────────── */
 async function toggleProxy(el) {
   el._changing = true;
@@ -395,6 +443,17 @@ function fmtDuration(ms) {
   if (!ms && ms !== 0) return '—';
   if (ms < 1000) return ms + ' ms';
   return (ms / 1000).toFixed(1) + ' s';
+}
+
+function fmtAge(seconds) {
+  if (seconds == null || seconds < 0) return '—';
+  if (seconds < 60) return seconds + (currentLang === 'zh' ? ' 秒前' : ' seconds ago');
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + (currentLang === 'zh' ? ' 分钟前' : ' minutes ago');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + (currentLang === 'zh' ? ' 小时前' : ' hours ago');
+  const days = Math.floor(hours / 24);
+  return days + (currentLang === 'zh' ? ' 天前' : ' days ago');
 }
 
 /* ── Proxy Config Form ─────────────────────────────────────────── */

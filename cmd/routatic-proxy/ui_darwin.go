@@ -352,12 +352,14 @@ Use the tray icon to reopen the window or quit entirely.`,
 
 		// ── 6. Start GUI HTTP server ────────────────────────────────
 		guiSrv = gui.New(gui.Options{
-			History:      proxySrv.History,
-			Metrics:      proxySrv.Metrics(),
-			AtomicConfig: atomic,
-			ProxyPort:    cfg.Port,
-			StartProxy:   startProxy,
-			StopProxy:    stopProxy,
+			History:          proxySrv.History,
+			Metrics:          proxySrv.Metrics(),
+			AtomicConfig:     atomic,
+			ProxyPort:        cfg.Port,
+			StartProxy:       startProxy,
+			StopProxy:        stopProxy,
+			CatalogDir:       resolveCatalogDir(configPath),
+			CatalogSourceURL: cfg.Catalog.SourceURL,
 		})
 		guiSrv.SetProxyRunning(proxyInitiallyStarted)
 

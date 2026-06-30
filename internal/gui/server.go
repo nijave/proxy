@@ -16,7 +16,9 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/daemon"
 	"github.com/routatic/proxy/internal/history"
@@ -44,19 +46,24 @@ type Server struct {
 	proxyPort         int
 	startProxy        func() error
 	stopProxy         func() error
+	catalogDir        string
+	catalogSourceURL  string
 	srv               *http.Server
 	logger            *slog.Logger
+	catalogMu         sync.Mutex
 }
 
 // Options configures the GUI server.
 type Options struct {
-	History      *history.History
-	Metrics      *metrics.Metrics
-	AtomicConfig *config.AtomicConfig
-	ProxyPort    int
-	StartProxy   func() error
-	StopProxy    func() error
-	Logger       *slog.Logger
+	History         *history.History
+	Metrics         *metrics.Metrics
+	AtomicConfig    *config.AtomicConfig
+	ProxyPort       int
+	StartProxy      func() error
+	StopProxy       func() error
+	CatalogDir      string
+	CatalogSourceURL string
+	Logger          *slog.Logger
 }
 
 // New creates a new GUI server.
@@ -68,10 +75,12 @@ func New(opts Options) *Server {
 		hist:       opts.History,
 		met:        opts.Metrics,
 		atomicCfg:  opts.AtomicConfig,
-		proxyPort:  opts.ProxyPort,
-		startProxy: opts.StartProxy,
-		stopProxy:  opts.StopProxy,
-		logger:     opts.Logger,
+		proxyPort:        opts.ProxyPort,
+		startProxy:       opts.StartProxy,
+		stopProxy:        opts.StopProxy,
+		catalogDir:       opts.CatalogDir,
+		catalogSourceURL: opts.CatalogSourceURL,
+		logger:           opts.Logger,
 	}
 	// Check initial autostart state.
 	s.cfg.Autostart = isAutostartEnabled()
@@ -130,6 +139,8 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 	mux.HandleFunc("/api/proxy/config", s.handleProxyConfig)
 	mux.HandleFunc("/api/proxy/start", s.handleProxyStart)
 	mux.HandleFunc("/api/proxy/stop", s.handleProxyStop)
+	mux.HandleFunc("/api/catalog/lock", s.handleCatalogLock)
+	mux.HandleFunc("/api/catalog/sync", s.handleCatalogSync)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -367,6 +378,71 @@ func (s *Server) handleProxyConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+type catalogLockResponse struct {
+	SyncedAt   *time.Time `json:"synced_at,omitempty"`
+	SHA256     string     `json:"sha256,omitempty"`
+	Bytes      int64      `json:"bytes,omitempty"`
+	TTLHours   int        `json:"ttl_hours,omitempty"`
+	AgeSeconds int64      `json:"age_seconds"`
+	Synced     bool       `json:"synced"`
+}
+
+func (s *Server) handleCatalogLock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	lock, err := catalog.ReadLock(s.catalogDir)
+	if err != nil {
+		writeJSON(w, catalogLockResponse{Synced: false, AgeSeconds: -1})
+		return
+	}
+
+	age := time.Since(lock.SyncedAt)
+	resp := catalogLockResponse{
+		SyncedAt:   &lock.SyncedAt,
+		SHA256:     lock.SHA256,
+		Bytes:      lock.Bytes,
+		TTLHours:   lock.TTLHours,
+		AgeSeconds: int64(age.Seconds()),
+		Synced:     true,
+	}
+	writeJSON(w, resp)
+}
+
+func (s *Server) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.catalogSourceURL == "" || s.catalogDir == "" {
+		http.Error(w, "catalog sync is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Serialize manual syncs so the lock file and on-disk catalog stay consistent.
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+
+	lock, err := catalog.Sync(s.catalogSourceURL, s.catalogDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("catalog sync failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	age := time.Since(lock.SyncedAt)
+	writeJSON(w, catalogLockResponse{
+		SyncedAt:   &lock.SyncedAt,
+		SHA256:     lock.SHA256,
+		Bytes:      lock.Bytes,
+		TTLHours:   lock.TTLHours,
+		AgeSeconds: int64(age.Seconds()),
+		Synced:     true,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
