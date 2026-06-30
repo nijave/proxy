@@ -225,7 +225,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 	// a non-empty catalog is available, prefer the cheapest matching catalog
 	// model while preserving the legacy fallback chain.
 	primary, ok := cfg.Models[scenarioKey]
-	if cat, catErr := r.catalog(); cfg.EnableCostBasedRouting && cat != nil && catErr == nil && len(cat.Models) > 0 {
+	if cat, catErr := r.catalog(); cfg.CostBasedRoutingEnabled() && cat != nil && catErr == nil && len(cat.Models) > 0 {
 		constraints := requestConstraints(messages, tokenCount)
 		selector := NewSelector(cat, cfg)
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
@@ -325,7 +325,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 	// a non-empty catalog is available, prefer the cheapest matching catalog
 	// model while preserving the legacy fallback chain.
 	primary, ok := cfg.Models[scenarioKey]
-	if cat, catErr := r.catalog(); cfg.EnableCostBasedRouting && cat != nil && catErr == nil && len(cat.Models) > 0 {
+	if cat, catErr := r.catalog(); cfg.CostBasedRoutingEnabled() && cat != nil && catErr == nil && len(cat.Models) > 0 {
 		constraints := requestConstraints(messages, tokenCount)
 		selector := NewSelector(cat, cfg)
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {

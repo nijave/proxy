@@ -748,6 +748,99 @@ func TestRoute_ModelOverridesPrecedence(t *testing.T) {
 	}
 }
 
+func TestCostBasedRouting_SelectsCheapest(t *testing.T) {
+	catalogPath := filepath.Join("testdata", "selector_catalog.json")
+	cfg := &config.Config{
+		APIKey:                 "global-key",
+		EnableCostBasedRouting: true,
+		Models: map[string]config.ModelConfig{
+			"default": {Provider: "opencode-go", ModelID: "legacy-default"},
+			"complex": {Provider: "opencode-go", ModelID: "legacy-complex"},
+		},
+	}
+	atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "")
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if result.Primary.ModelID != "cheap-no-tools" {
+		t.Errorf("default scenario: expected cheap-no-tools, got %s", result.Primary.ModelID)
+	}
+
+	complex, err := router.Route([]MessageContent{{Role: "user", Content: "Architect a new microservice"}}, 100, "")
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if complex.Primary.ModelID != "large-context" {
+		t.Errorf("complex scenario: expected large-context, got %s", complex.Primary.ModelID)
+	}
+}
+
+func TestCostBasedRouting_DisabledUsesLegacy(t *testing.T) {
+	catalogPath := filepath.Join("testdata", "selector_catalog.json")
+	cfg := &config.Config{
+		APIKey:                 "global-key",
+		EnableCostBasedRouting: false,
+		Models: map[string]config.ModelConfig{
+			"default": {Provider: "opencode-go", ModelID: "legacy-default"},
+		},
+	}
+	atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "")
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if result.Primary.ModelID != "legacy-default" {
+		t.Errorf("expected legacy-default, got %s", result.Primary.ModelID)
+	}
+}
+
+func TestCostBasedRouting_FallsBackWhenNoMatch(t *testing.T) {
+	catalogPath := filepath.Join("testdata", "selector_catalog.json")
+	cfg := &config.Config{
+		APIKey:                 "global-key",
+		EnableCostBasedRouting: true,
+		Models: map[string]config.ModelConfig{
+			"background": {Provider: "opencode-go", ModelID: "legacy-background"},
+		},
+	}
+	atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	result, err := router.Route([]MessageContent{{Role: "user", Content: "what is the time"}}, 100, "")
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if result.Primary.ModelID != "legacy-background" {
+		t.Errorf("expected fallback legacy-background, got %s", result.Primary.ModelID)
+	}
+}
+
+func TestCostBasedRouting_RouteForStreaming(t *testing.T) {
+	catalogPath := filepath.Join("testdata", "selector_catalog.json")
+	cfg := &config.Config{
+		APIKey:                 "global-key",
+		EnableCostBasedRouting: true,
+		Models: map[string]config.ModelConfig{
+			"fast": {Provider: "opencode-go", ModelID: "legacy-fast"},
+		},
+	}
+	atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	result, err := router.RouteForStreaming([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "")
+	if err != nil {
+		t.Fatalf("RouteForStreaming failed: %v", err)
+	}
+	if result.Primary.ModelID != "cheap-no-tools" {
+		t.Errorf("expected cheap-no-tools, got %s", result.Primary.ModelID)
+	}
+}
+
 func TestRoute_LegacyConfigFixtures(t *testing.T) {
 	t.Run("example config fixture", func(t *testing.T) {
 		t.Setenv("ROUTATIC_PROXY_API_KEY", "test-key")

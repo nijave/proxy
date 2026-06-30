@@ -12,6 +12,7 @@ type Config struct {
 	HotReload                      bool                     `json:"hot_reload"`
 	EnableStreamingScenarioRouting bool                     `json:"enable_streaming_scenario_routing"`
 	EnableCostBasedRouting         bool                     `json:"enable_cost_based_routing"`
+	CostRouting                    *CostRoutingConfig       `json:"cost_routing,omitempty"`
 	RespectRequestedModel          *bool                    `json:"respect_requested_model,omitempty"`
 	Models                         map[string]ModelConfig   `json:"models"`
 	Fallbacks                      map[string][]ModelConfig `json:"fallbacks"`
@@ -24,6 +25,30 @@ type Config struct {
 	Logging                        LoggingConfig            `json:"logging"`
 	Debug                          DebugConfig              `json:"debug"`
 	Catalog                        CatalogConfig            `json:"catalog"`
+}
+
+// CostRoutingConfig controls cost-aware model selection.
+type CostRoutingConfig struct {
+	Enabled            bool               `json:"enabled"`
+	PreferProviders    []string           `json:"prefer_providers,omitempty"`
+	MaxContextWindow   int64              `json:"max_context_window,omitempty"`
+	PenaltyPerProvider map[string]float64 `json:"penalty_per_provider,omitempty"`
+}
+
+// CostBasedRoutingEnabled reports whether cost-aware routing should be active.
+// It is enabled when either the legacy top-level flag is set or the nested
+// cost_routing block explicitly enables it.
+func (c *Config) CostBasedRoutingEnabled() bool {
+	if c == nil {
+		return false
+	}
+	if c.EnableCostBasedRouting {
+		return true
+	}
+	if c.CostRouting != nil && c.CostRouting.Enabled {
+		return true
+	}
+	return false
 }
 
 // AnthropicFirstConfig controls direct Anthropic passthrough with OpenCode fallback.

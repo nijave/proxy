@@ -132,6 +132,30 @@
       "description": "Scenario that prefers a specific provider",
       "preferred_providers": ["openrouter"],
       "min_context_window": 0
+    },
+    "complex": {
+      "name": "complex",
+      "description": "Complex workload requiring tools and a large context window",
+      "requires_tools": true,
+      "min_context_window": 500000
+    },
+    "vision": {
+      "name": "vision",
+      "description": "Simple vision workload",
+      "requires_vision": true,
+      "min_context_window": 0
+    },
+    "vision_complex": {
+      "name": "vision_complex",
+      "description": "Complex vision workload requiring tools",
+      "requires_vision": true,
+      "requires_tools": true,
+      "min_context_window": 0
+    },
+    "fast": {
+      "name": "fast",
+      "description": "Streaming-optimized workload prioritizing low latency",
+      "min_context_window": 0
     }
   }
 }
