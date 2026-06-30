@@ -444,7 +444,7 @@ func modelsCmd() *cobra.Command {
 			catalogPath := filepath.Join(catalogDir, "catalog.json")
 			cat, err := catalog.Load(catalogPath)
 			if err != nil {
-				return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first")
+				return fmt.Errorf("catalog not found. Run 'routatic-proxy catalog sync' first.")
 			}
 
 			globalKeys := cfg.EffectiveAPIKeys()
