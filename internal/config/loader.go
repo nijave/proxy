@@ -28,6 +28,8 @@ const (
 	defaultZenAnthropicBaseURL = "https://opencode.ai/zen/v1/messages"
 	defaultZenResponsesBaseURL = "https://opencode.ai/zen/v1/responses"
 	defaultZenGeminiBaseURL    = "https://opencode.ai/zen/v1/models"
+
+	defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
 )
 
 // envVarPattern matches ${ENV_VAR} placeholders in config values.
@@ -192,6 +194,15 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.AWSBedrock.APIKey = ""
 	}
 
+	if v := envValue("ROUTATIC_PROXY_OPENROUTER_API_KEY"); v != "" {
+		cfg.OpenRouter.APIKey = v
+		cfg.OpenRouter.APIKeys = nil
+	}
+	if v := envValue("ROUTATIC_PROXY_OPENROUTER_API_KEYS"); v != "" {
+		cfg.OpenRouter.APIKeys = parseCommaSeparatedKeys(v)
+		cfg.OpenRouter.APIKey = ""
+	}
+
 	if v := envValue("ROUTATIC_PROXY_HOST"); v != "" {
 		cfg.Host = v
 	}
@@ -265,6 +276,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.OpenCodeZen.GeminiBaseURL == "" {
 		cfg.OpenCodeZen.GeminiBaseURL = defaultZenGeminiBaseURL
 	}
+	if cfg.OpenRouter.BaseURL == "" {
+		cfg.OpenRouter.BaseURL = defaultOpenRouterBaseURL
+	}
 	if cfg.OpenCodeZen.TimeoutMs == 0 {
 		cfg.OpenCodeZen.TimeoutMs = defaultTimeoutMs
 	}
@@ -332,6 +346,13 @@ func validate(cfg *Config) error {
 	}
 	if err := validateAPIKeys(cfg.AWSBedrock.APIKeys); err != nil {
 		return fmt.Errorf("aws_bedrock.api_keys: %w", err)
+	}
+
+	if err := validateSingleAPIKey(cfg.OpenRouter.APIKey); err != nil {
+		return fmt.Errorf("openrouter.api_key: %w", err)
+	}
+	if err := validateAPIKeys(cfg.OpenRouter.APIKeys); err != nil {
+		return fmt.Errorf("openrouter.api_keys: %w", err)
 	}
 
 	if err := validateModelOverrides(cfg.ModelOverrides); err != nil {

@@ -1,0 +1,67 @@
+{
+  "providers": {
+    "opencode-go": {
+      "name": "opencode-go",
+      "base_url": "https://go.opencode.ai/v1",
+      "api_key": "go-key",
+      "enabled": true
+    },
+    "openrouter": {
+      "name": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "or-key",
+      "enabled": true
+    },
+    "disabled-provider": {
+      "name": "disabled-provider",
+      "base_url": "https://disabled.example/v1",
+      "api_key": "disabled-key",
+      "enabled": false
+    }
+  },
+  "models": {
+    "deepseek-v4-flash": {
+      "name": "deepseek-v4-flash",
+      "display_name": "DeepSeek V4 Flash",
+      "providers": ["opencode-go"],
+      "context_window": 128000,
+      "cost_input_per_m": 0.5,
+      "cost_output_per_m": 1.5,
+      "tools": true,
+      "vision": false,
+      "reasoning": false
+    },
+    "kimi-k2.6": {
+      "name": "kimi-k2.6",
+      "display_name": "Kimi K2.6",
+      "providers": ["opencode-go", "openrouter"],
+      "context_window": 256000,
+      "cost_input_per_m": 2.0,
+      "cost_output_per_m": 6.0,
+      "tools": true,
+      "vision": true,
+      "reasoning": false
+    },
+    "glm-5.2": {
+      "name": "glm-5.2",
+      "display_name": "GLM 5.2",
+      "providers": ["openrouter"],
+      "context_window": 128000,
+      "cost_input_per_m": 3.0,
+      "cost_output_per_m": 9.0,
+      "tools": true,
+      "vision": false,
+      "reasoning": true
+    },
+    "legacy-name": {
+      "name": "old-model",
+      "display_name": "Old Model",
+      "providers": ["opencode-go"]
+    },
+    "only-disabled": {
+      "name": "only-disabled",
+      "display_name": "Only Disabled",
+      "providers": ["disabled-provider"]
+    }
+  }
+}

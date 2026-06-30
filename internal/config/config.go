@@ -18,6 +18,7 @@ type Config struct {
 	AWSBedrock                     AWSBedrockConfig         `json:"aws_bedrock"`
 	OpenCodeGo                     OpenCodeGoConfig         `json:"opencode_go"`
 	OpenCodeZen                    OpenCodeZenConfig        `json:"opencode_zen"`
+	OpenRouter                     OpenRouterConfig         `json:"openrouter"`
 	AnthropicFirst                 AnthropicFirstConfig     `json:"anthropic_first"`
 	Logging                        LoggingConfig            `json:"logging"`
 	Debug                          DebugConfig              `json:"debug"`
@@ -100,6 +101,28 @@ type OpenCodeGoConfig struct {
 // EffectiveAPIKeys returns the pool of API keys for OpenCode Go.
 // APIKeys takes precedence; falls back to the single APIKey field.
 func (c *OpenCodeGoConfig) EffectiveAPIKeys() []string {
+	if len(c.APIKeys) > 0 {
+		return c.APIKeys
+	}
+	if c.APIKey != "" {
+		return []string{c.APIKey}
+	}
+	return nil
+}
+
+// OpenRouterConfig holds the upstream OpenRouter API settings.
+type OpenRouterConfig struct {
+	BaseURL            string   `json:"base_url"`
+	APIKey             string   `json:"api_key,omitempty"`
+	APIKeys            []string `json:"api_keys,omitempty"`
+	TimeoutMs          int      `json:"timeout_ms"`
+	StreamTimeoutMs    int      `json:"stream_timeout_ms"`
+	StreamingTimeoutMs int      `json:"streaming_timeout_ms,omitempty"`
+}
+
+// EffectiveAPIKeys returns the pool of API keys for OpenRouter.
+// APIKeys takes precedence; falls back to the single APIKey field.
+func (c *OpenRouterConfig) EffectiveAPIKeys() []string {
 	if len(c.APIKeys) > 0 {
 		return c.APIKeys
 	}
