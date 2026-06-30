@@ -3,6 +3,7 @@ package router
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/routatic/proxy/internal/catalog"
@@ -64,8 +65,8 @@ func (s *Selector) SelectCheapest(scenario string, constraints ScenarioConstrain
 
 	sort.Slice(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
-		costA := a.CostInputPerM + a.CostOutputPerM
-		costB := b.CostInputPerM + b.CostOutputPerM
+		costA := a.CostInputPerM + a.CostOutputPerM + s.effectivePenalty(a.Provider)
+		costB := b.CostInputPerM + b.CostOutputPerM + s.effectivePenalty(b.Provider)
 		if costA != costB {
 			return costA < costB
 		}
@@ -83,9 +84,11 @@ func (s *Selector) SelectCheapest(scenario string, constraints ScenarioConstrain
 // constraints.
 func (s *Selector) resolveCandidates(scen catalog.Scenario, constraints ScenarioConstraints) []catalog.ResolvedModel {
 	providers := s.providerSet(scen)
-	minContext := scen.MinContextWindow
-	if constraints.Context > minContext {
-		minContext = constraints.Context
+	minContext := max(scen.MinContextWindow, constraints.Context)
+
+	maxContext := int64(0)
+	if s.cfg != nil && s.cfg.CostRouting != nil && s.cfg.CostRouting.MaxContextWindow > 0 {
+		maxContext = s.cfg.CostRouting.MaxContextWindow
 	}
 
 	var candidates []catalog.ResolvedModel
@@ -96,6 +99,9 @@ func (s *Selector) resolveCandidates(scen catalog.Scenario, constraints Scenario
 		}
 		for modelKey, model := range s.catalog.Models {
 			if !modelSupportsProvider(model, providerName) {
+				continue
+			}
+			if maxContext > 0 && model.ContextWindow > maxContext {
 				continue
 			}
 			if !modelMatches(model, scen, constraints, minContext) {
@@ -123,30 +129,62 @@ func (s *Selector) resolveCandidates(scen catalog.Scenario, constraints Scenario
 
 // providerSet returns the enabled providers that should be considered for a
 // scenario. When the scenario lists preferred providers, only those that are
-// enabled are returned; otherwise all enabled providers are returned.
+// enabled are returned; when the global cost_routing.prefer_providers is
+// non-empty it is intersected with the scenario's preferred providers (or used
+// alone when the scenario has none). Otherwise all enabled providers are returned.
 func (s *Selector) providerSet(scen catalog.Scenario) map[string]bool {
-	set := make(map[string]bool)
-	if len(scen.PreferredProviders) > 0 {
-		for _, p := range scen.PreferredProviders {
-			if s.enabledProviders[p] {
-				set[p] = true
-			}
+	globalPref := s.globalPreferProviders()
+	scenarioPref := scen.PreferredProviders
+
+	// If neither global nor scenario has preferred providers, return all enabled.
+	if len(globalPref) == 0 && len(scenarioPref) == 0 {
+		set := make(map[string]bool, len(s.enabledProviders))
+		for p := range s.enabledProviders {
+			set[p] = true
 		}
 		return set
 	}
-	for p := range s.enabledProviders {
-		set[p] = true
+
+	// Resolve which list to use. When both are set, intersect them.
+	candidates := scenarioPref
+	if len(globalPref) > 0 {
+		if len(scenarioPref) == 0 {
+			candidates = globalPref
+		} else {
+			// Intersect global and scenario preferred providers.
+			globalSet := make(map[string]struct{}, len(globalPref))
+			for _, p := range globalPref {
+				globalSet[p] = struct{}{}
+			}
+			candidates = nil
+			for _, p := range scenarioPref {
+				if _, ok := globalSet[p]; ok {
+					candidates = append(candidates, p)
+				}
+			}
+		}
+	}
+
+	set := make(map[string]bool, len(candidates))
+	for _, p := range candidates {
+		if s.enabledProviders[p] {
+			set[p] = true
+		}
 	}
 	return set
 }
 
-func modelSupportsProvider(model catalog.Model, provider string) bool {
-	for _, p := range model.Providers {
-		if p == provider {
-			return true
-		}
+// globalPreferProviders returns the global prefer_providers list from config
+// or nil when unset.
+func (s *Selector) globalPreferProviders() []string {
+	if s.cfg == nil || s.cfg.CostRouting == nil {
+		return nil
 	}
-	return false
+	return s.cfg.CostRouting.PreferProviders
+}
+
+func modelSupportsProvider(model catalog.Model, provider string) bool {
+	return slices.Contains(model.Providers, provider)
 }
 
 func modelMatches(model catalog.Model, scen catalog.Scenario, constraints ScenarioConstraints, minContext int64) bool {
@@ -197,6 +235,15 @@ func enabledProviders(cfg *config.Config) map[string]bool {
 // selector's runtime configuration.
 func (s *Selector) IsEnabledProvider(provider string) bool {
 	return s.enabledProviders[provider]
+}
+
+// effectivePenalty returns the additional per-provider cost penalty from the
+// config, or 0 when no penalty is configured for the named provider.
+func (s *Selector) effectivePenalty(provider string) float64 {
+	if s.cfg == nil || s.cfg.CostRouting == nil || s.cfg.CostRouting.PenaltyPerProvider == nil {
+		return 0
+	}
+	return s.cfg.CostRouting.PenaltyPerProvider[provider]
 }
 
 // ErrNoCandidateModel is returned when SelectCheapest cannot find a model that
