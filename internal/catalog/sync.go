@@ -98,7 +98,6 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 
 	if err := idx.Write(destDir); err != nil {
 		_ = os.Remove(tmpPath)
-		_ = os.Remove(finalPath)
 		_ = os.Remove(filepath.Join(destDir, indexTmpFileName))
 		_ = os.Remove(filepath.Join(destDir, indexFileName))
 		return nil, fmt.Errorf("write provider index: %w", err)
