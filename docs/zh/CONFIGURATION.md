@@ -19,6 +19,16 @@
   "port": 3456,
   "hot_reload": false,
 
+  "enable_cost_based_routing": false,
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  },
+
   "models": {
     "default": {
       "provider": "opencode-go",
@@ -222,6 +232,30 @@ DeepSeek V4 用户可以将任何场景模型设置为 `deepseek-v4-pro` 或 `de
 | **后台** | 文件读取、目录列表、grep 模式 | `models.background` | `qwen3.5-plus` |
 
 路由优先级：**长上下文** > **思考** > **后台** > **默认**
+
+## 基于成本的路由
+
+启用后，代理使用模型定价目录自动为每个场景选择最便宜的合格模型，而非始终使用静态配置的主模型。
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  }
+}
+```
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `enabled` | `bool` | 激活基于成本的模型选择。也可通过旧版顶层 `enable_cost_based_routing` 标志设置。 |
+| `prefer_providers` | `string[]` | 全局限制候选提供商。设置后，仅考虑这些提供商上的模型。与每场景 `preferred_providers` 交集处理。 |
+| `max_context_window` | `int64` | 候选模型上下文窗口的硬上限。超过此大小的模型将被排除。`0`（默认）表示无上限。 |
+| `penalty_per_provider` | `map[string]float64` | 按提供商的成本惩罚，在选择时加到有效成本上。用于在不完全移除提供商的情况下使其吸引力降低。 |
 
 ## 降级链
 

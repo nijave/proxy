@@ -61,6 +61,8 @@ The router analyzes each request and assigns it a scenario. Each scenario maps t
 
 **Streaming override**: when `enable_streaming_scenario_routing` is false (default), streaming requests always route to the `fast` model (Qwen3.6 Plus) for better TTFT.
 
+**Cost-based routing**: when `cost_routing.enabled` (or the legacy `enable_cost_based_routing`) is set, the `Selector` resolves all eligible models from the catalog for the matched scenario, applies the `max_context_window` cap, filters by `prefer_providers`, and sorts by effective cost (raw cost + per-provider penalty). The cheapest candidate becomes the primary model for that request, replacing the static `models.<scenario>` entry. This is implemented in `internal/router/selector.go`.
+
 ## Request Transformation
 
 Claude Code sends Anthropic Messages API format. The proxy transforms to the provider's native format:

@@ -55,6 +55,8 @@ If a model's upstream doesn't support Anthropic tool format (`type: "custom"` se
 4. Background (simple read-only ops, no tools) → Qwen3.7 Max
 5. Default → Kimi K2.6
 
+**Cost-based routing:** when `cost_routing.enabled` is set, `Selector` in `internal/router/selector.go` replaces the static primary model with automatic cheapest-model selection from the catalog. It applies `max_context_window` (hard cap on context window), `prefer_providers` (global provider filter, intersected with per-scenario preferences), and `penalty_per_provider` (per-provider cost penalty added during sort). Enabled via `cost_routing.enabled` or the legacy `enable_cost_based_routing` flag.
+
 For streaming, the router downgrades to fast models (Qwen3.7 Plus) for better TTFT.
 
 **Deprecated models:**

@@ -21,6 +21,16 @@ For migration, `~/.config/oc-go-cc/config.json` is loaded when the new config fi
     "base_url": "https://api.anthropic.com"
   },
 
+  "enable_cost_based_routing": false,
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  },
+
   "models": {
     "default": {
       "provider": "opencode-go",
@@ -259,6 +269,45 @@ DeepSeek V4 users can set any scenario model to `deepseek-v4-pro` or `deepseek-v
 | **Background**   | File read, directory list, grep patterns                                     | `models.background`   | `qwen3.5-plus` |
 
 Routing priority: **Long Context** > **Think** > **Background** > **Default**
+
+## Cost-Based Routing
+
+When enabled, the proxy uses a catalog of model pricing data to automatically select the cheapest eligible model for each scenario, rather than always using the statically configured primary model.
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Activates cost-aware model selection. Can also be set via the legacy `enable_cost_based_routing` top-level flag. |
+| `prefer_providers` | `string[]` | Restricts candidate providers globally. When set, only models on these providers are considered. Intersected with per-scenario `preferred_providers` when both are set. |
+| `max_context_window` | `int64` | Hard cap on candidate model context window. Models exceeding this size are excluded. `0` (default) means no cap. |
+| `penalty_per_provider` | `map[string]float64` | Per-provider cost penalty added to the effective cost during selection. Use this to bias away from providers without removing them entirely. |
+
+When enabled, `SelectCheapest` resolves all eligible provider/model pairs for the matched scenario, applies the max context window cap, filters by the preferred providers set, and sorts by effective cost (raw cost + penalty). The cheapest candidate wins. This replaces the static `models.<scenario>` primary model.
+
+```json
+{
+  "cost_routing": {
+    "penalty_per_provider": {
+      "opencode-go": 0.1,
+      "openrouter": 0.05
+    }
+  }
+}
+```
+
+Penalties are additive to the raw cost. A model on `opencode-go` with base cost 2.0 and a penalty of 0.1 has effective cost 2.1.
 
 ## Fallback Chains
 

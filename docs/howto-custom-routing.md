@@ -122,6 +122,78 @@ By default, the proxy respects the `model` field from Claude Code. Disable this 
   "respect_requested_model": false}
 ```
 
+## Enable Cost-Based Routing
+
+By default, each scenario maps to a single statically configured primary model. Cost-based routing replaces this with automatic cheapest-model selection using a model pricing catalog:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true
+  }
+}
+```
+
+### Restrict to Preferred Providers
+
+Limit cost-based selection to a subset of providers:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"]
+  }
+}
+```
+
+When a scenario also has per-scenario `preferred_providers`, the two lists are intersected.
+
+### Cap the Context Window
+
+Exclude models with context windows larger than a threshold:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "max_context_window": 500000
+  }
+}
+```
+
+Models with a context window exceeding the cap are filtered out. Set to `0` (default) for no limit.
+
+### Penalize Providers
+
+Add an artificial cost penalty to specific providers to bias selection away from them:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "penalty_per_provider": {
+      "openrouter": 0.05,
+      "opencode-go": 0.1
+    }
+  }
+}
+```
+
+The penalty is added to the raw per-million-token cost during sorting. A model with base cost 2.0 on a provider with a 0.1 penalty has effective cost 2.1.
+
+### Legacy Flag
+
+The top-level `enable_cost_based_routing` flag also enables cost routing:
+
+```json
+{
+  "enable_cost_based_routing": true
+}
+```
+
+If both `enable_cost_based_routing` and `cost_routing.enabled` are set, either being `true` activates the feature.
+
 ## Custom Scenario Detection
 
 Scenario detection is keyword-based. To add custom patterns, edit `internal/router/scenarios.go`:

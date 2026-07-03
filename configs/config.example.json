@@ -5,6 +5,17 @@
   "hot_reload": false,
   "enable_streaming_scenario_routing": false,
   "respect_requested_model": false,
+  "enable_cost_based_routing": false,
+
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  },
+
   "anthropic_first": {
     "enabled": false,
     "base_url": "https://api.anthropic.com"

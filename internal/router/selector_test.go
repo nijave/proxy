@@ -413,3 +413,207 @@ func TestSelectCheapest_Constraints_CombinedVisionAndTools(t *testing.T) {
 		t.Errorf("SelectCheapest(vision_complex) total cost = %v, want 8.0", got.CostInputPerM+got.CostOutputPerM)
 	}
 }
+
+// TestSelectCheapest_PenaltyPerProvider verifies that cost_routing.penalty_per_provider
+// inflates a provider's effective cost during selection. When opencode-go is penalised
+// enough, large-context on openrouter (unpenalised, cost 3.0) becomes cheaper than
+// cheap-no-tools on opencode-go (cost 2.0 + penalty).
+func TestSelectCheapest_PenaltyPerProvider(t *testing.T) {
+	cfg := &config.Config{
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+		CostRouting: &config.CostRoutingConfig{
+			PenaltyPerProvider: map[string]float64{
+				"opencode-go": 2.0,
+			},
+		},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("default", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	// Without the penalty cheap-no-tools (opencode-go, cost 2.0) would win at 2.0.
+	// With a 2.0 penalty on opencode-go its effective cost becomes 4.0, so
+	// large-context on the unpenalised openrouter (cost 3.0) should win.
+	if got.ModelID != "large-context" {
+		t.Errorf("SelectCheapest(default) = %q, want %q (penalty should flip to unpenalised provider)", got.ModelID, "large-context")
+	}
+	if got.Provider != "openrouter" {
+		t.Errorf("SelectCheapest(default) provider = %q, want %q", got.Provider, "openrouter")
+	}
+	// The raw cost should be 3.0 (openrouter's large-context), not the penalised cost.
+	if got.CostInputPerM+got.CostOutputPerM != 3.0 {
+		t.Errorf("SelectCheapest(default) raw cost = %v, want 3.0", got.CostInputPerM+got.CostOutputPerM)
+	}
+}
+
+// TestSelectCheapest_PenaltyPerProvider_NoEffectOnUnlisted verifies that a penalty
+// only applies to the named providers and does not affect unlisted providers.
+func TestSelectCheapest_PenaltyPerProvider_NoEffectOnUnlisted(t *testing.T) {
+	cfg := &config.Config{
+		OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+		OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+		CostRouting: &config.CostRoutingConfig{
+			PenaltyPerProvider: map[string]float64{
+				"nonexistent-provider": 100.0,
+			},
+		},
+	}
+	selector := NewSelector(selectorTestCatalog(t), cfg)
+
+	got, err := selector.SelectCheapest("default", ScenarioConstraints{})
+	if err != nil {
+		t.Fatalf("SelectCheapest returned error: %v", err)
+	}
+
+	// A penalty on a provider that does not exist in the catalog must not affect
+	// selection — cheap-no-tools (opencode-go, cost 2.0) should still win.
+	if got.ModelID != "cheap-no-tools" {
+		t.Errorf("SelectCheapest(default) = %q, want %q (unused penalty must not affect selection)", got.ModelID, "cheap-no-tools")
+	}
+	if got.Provider != "opencode-go" {
+		t.Errorf("SelectCheapest(default) provider = %q, want %q", got.Provider, "opencode-go")
+	}
+}
+
+// TestSelectCheapest_MaxContextWindow verifies that cost_routing.max_context_window
+// caps the context window of candidate models, filtering out those that exceed it.
+func TestSelectCheapest_MaxContextWindow(t *testing.T) {
+	t.Run("filters models exceeding the cap", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+			CostRouting: &config.CostRoutingConfig{
+				MaxContextWindow: 200000,
+			},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		got, err := selector.SelectCheapest("default", ScenarioConstraints{})
+		if err != nil {
+			t.Fatalf("SelectCheapest returned error: %v", err)
+		}
+
+		// large-context (1M) and vision-model (256K) exceed the 200K cap and must be excluded.
+		// The cheapest remaining model is cheap-no-tools (128K) on opencode-go at cost 2.0.
+		if got.ModelID != "cheap-no-tools" {
+			t.Errorf("SelectCheapest(default) = %q, want %q", got.ModelID, "cheap-no-tools")
+		}
+		if got.ContextWindow > 200000 {
+			t.Errorf("SelectCheapest(default) context = %d, want <= 200000", got.ContextWindow)
+		}
+	})
+
+	t.Run("zero cap has no effect", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+			CostRouting: &config.CostRoutingConfig{
+				MaxContextWindow: 0,
+			},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		got, err := selector.SelectCheapest("default", ScenarioConstraints{})
+		if err != nil {
+			t.Fatalf("SelectCheapest returned error: %v", err)
+		}
+
+		// Without the cap, large-context (1M) is eligible and expensive models are available.
+		// The cheapest remains cheap-no-tools.
+		if got.ModelID != "cheap-no-tools" {
+			t.Errorf("SelectCheapest(default) = %q, want %q", got.ModelID, "cheap-no-tools")
+		}
+	})
+
+	t.Run("cap filters all models producing error", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			CostRouting: &config.CostRoutingConfig{
+				MaxContextWindow: 100,
+			},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		_, err := selector.SelectCheapest("default", ScenarioConstraints{})
+		if err == nil {
+			t.Fatal("SelectCheapest expected error when MaxContextWindow excludes every model, got nil")
+		}
+		if !errors.Is(err, ErrNoCandidateModel) {
+			t.Errorf("SelectCheapest error = %v, want ErrNoCandidateModel", err)
+		}
+	})
+}
+
+// TestSelectCheapest_GlobalPreferProviders verifies that
+// cost_routing.prefer_providers filters the eligible provider set globally.
+func TestSelectCheapest_GlobalPreferProviders(t *testing.T) {
+	t.Run("global pref limits to listed providers", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+			CostRouting: &config.CostRoutingConfig{
+				PreferProviders: []string{"openrouter"},
+			},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		// "default" scenario has no scenario-level preferences, so the global
+		// prefer_providers list is used alone. Only openrouter models are eligible.
+		got, err := selector.SelectCheapest("default", ScenarioConstraints{})
+		if err != nil {
+			t.Fatalf("SelectCheapest returned error: %v", err)
+		}
+
+		if got.Provider != "openrouter" {
+			t.Errorf("SelectCheapest(default) provider = %q, want %q", got.Provider, "openrouter")
+		}
+		// Cheapest openrouter model is large-context at cost 3.0.
+		if got.ModelID != "large-context" {
+			t.Errorf("SelectCheapest(default) = %q, want %q", got.ModelID, "large-context")
+		}
+	})
+
+	t.Run("global pref intersects with scenario pref", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+			CostRouting: &config.CostRoutingConfig{
+				PreferProviders: []string{"opencode-go"},
+			},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		// "preferred_only" scenario prefers openrouter, global pref prefers
+		// opencode-go. The intersection is empty → no candidates.
+		_, err := selector.SelectCheapest("preferred_only", ScenarioConstraints{})
+		if err == nil {
+			t.Fatal("SelectCheapest expected error when global and scenario prefs intersect to empty, got nil")
+		}
+		if !errors.Is(err, ErrNoCandidateModel) {
+			t.Errorf("SelectCheapest error = %v, want ErrNoCandidateModel", err)
+		}
+	})
+
+	t.Run("scenario pref used when global pref is empty", func(t *testing.T) {
+		cfg := &config.Config{
+			OpenCodeGo: config.OpenCodeGoConfig{APIKey: "go-key"},
+			OpenRouter: config.OpenRouterConfig{APIKey: "or-key"},
+		}
+		selector := NewSelector(selectorTestCatalog(t), cfg)
+
+		// No global prefer_providers, so "preferred_only" scenario's own
+		// preferred_providers (openrouter) is used.
+		got, err := selector.SelectCheapest("preferred_only", ScenarioConstraints{})
+		if err != nil {
+			t.Fatalf("SelectCheapest returned error: %v", err)
+		}
+
+		if got.Provider != "openrouter" {
+			t.Errorf("SelectCheapest(preferred_only) provider = %q, want %q", got.Provider, "openrouter")
+		}
+	})
+}
