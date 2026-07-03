@@ -845,11 +845,12 @@ func TestRoute_LegacyConfigFixtures(t *testing.T) {
 	t.Run("example config fixture", func(t *testing.T) {
 		t.Setenv("ROUTATIC_PROXY_API_KEY", "test-key")
 
-		cfg, err := config.LoadFromPath("/Users/mac/Dev/routatic/proxy/configs/config.example.json")
+		cfgPath := "../../configs/config.example.json"
+		cfg, err := config.LoadFromPath(cfgPath)
 		if err != nil {
 			t.Fatalf("failed to load example config: %v", err)
 		}
-		atomic := config.NewAtomicConfig(cfg, "/Users/mac/Dev/routatic/proxy/configs/config.example.json")
+		atomic := config.NewAtomicConfig(cfg, cfgPath)
 		router := NewModelRouter(atomic)
 
 		messages := []MessageContent{{Role: "user", Content: "Hello"}}
