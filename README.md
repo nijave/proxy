@@ -199,6 +199,7 @@ routatic-proxy --version          Show version
 | [MODELS.md](MODELS.md)                                       | Model capabilities, costs, and routing recommendations          |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                           | Development setup, architecture, how it works                   |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md)                     | Common issues and debug mode                                    |
+| [docs/fedora-setup.md](docs/fedora-setup.md)                 | Fedora 44 setup guide (installation, systemd, SELinux)          |
 | [docs/architecture.md](docs/architecture.md)                 | System design, request flow, module overview                    |
 | [docs/reference-api.md](docs/reference-api.md)               | HTTP API reference (endpoints, streaming, errors)               |
 | [docs/howto-add-model.md](docs/howto-add-model.md)           | Adding new models (zero code changes)                           |
