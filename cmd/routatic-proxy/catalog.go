@@ -84,6 +84,12 @@ func ensureCatalogSynced(cfg *config.Config, configPath string, now time.Time) e
 		return nil
 	}
 
+	// Skip sync if no source URL is configured.
+	if cfg.Catalog.SourceURL == "" {
+		slog.Debug("catalog source URL not configured, skipping sync")
+		return nil
+	}
+
 	catalogDir := resolveCatalogDir(configPath)
 	lock, err := catalog.ReadLock(catalogDir)
 	if err != nil {

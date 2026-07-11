@@ -131,6 +131,8 @@ func ProviderKeyCount(atomicCfg *config.AtomicConfig, provider string) int {
 		keys = cfg.OpenCodeZen.EffectiveAPIKeys()
 	case ProviderAWSBedrock:
 		keys = cfg.AWSBedrock.EffectiveAPIKeys()
+	case ProviderOpenRouter:
+		keys = cfg.OpenRouter.EffectiveAPIKeys()
 	default:
 		// Unknown provider - default to global keys
 		keys = cfg.EffectiveAPIKeys()

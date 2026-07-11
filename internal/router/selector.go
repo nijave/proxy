@@ -133,6 +133,15 @@ func (s *Selector) resolveCandidates(scen catalog.Scenario, constraints Scenario
 // non-empty it is intersected with the scenario's preferred providers (or used
 // alone when the scenario has none). Otherwise all enabled providers are returned.
 func (s *Selector) providerSet(scen catalog.Scenario) map[string]bool {
+	// Handle nil config by returning all enabled providers.
+	if s.cfg == nil {
+		set := make(map[string]bool, len(s.enabledProviders))
+		for p := range s.enabledProviders {
+			set[p] = true
+		}
+		return set
+	}
+
 	globalPref := s.globalPreferProviders()
 	scenarioPref := scen.PreferredProviders
 
