@@ -61,6 +61,7 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	openCodeClient := client.NewOpenCodeClient(atomic, captureLogger)
 	modelRouter := router.NewModelRouterWithCatalog(atomic, filepath.Join(filepath.Dir(atomic.Path()), "catalog", "catalog.json"))
 	fallbackHandler := router.NewFallbackHandler(logger, 3, 30*time.Second)
+	fallbackHandler.SetAtomicConfig(atomic)
 
 	// Register providers.
 	providerRegistry := core.NewProviderRegistry()
