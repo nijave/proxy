@@ -13,8 +13,14 @@ rules:
   shared: []
     # Add rules that apply to both backend and frontend
 
-  backend: []
-    # Add backend-specific rules
+  backend:
+    - rules/auto-detected/ERROR_HANDLING.md
+    - rules/auto-detected/CONSTRUCTOR_PATTERN.md
+    - rules/auto-detected/CONTEXT_PROPAGATION.md
+    - rules/auto-detected/SLOG_LOGGING.md
+    - rules/auto-detected/TEST_HELPERS.md
+    - rules/auto-detected/JSON_RAWMESSAGE.md
+    - rules/auto-detected/SYNC_MUTEX.md
 
   frontend: []
     # Add frontend-specific rules
