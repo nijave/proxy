@@ -16,6 +16,7 @@ import (
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
 	"github.com/routatic/proxy/internal/debug"
+	"github.com/routatic/proxy/internal/gui"
 	"github.com/routatic/proxy/internal/handlers"
 	"github.com/routatic/proxy/internal/history"
 	"github.com/routatic/proxy/internal/metrics"
@@ -24,7 +25,6 @@ import (
 	"github.com/routatic/proxy/internal/status"
 	"github.com/routatic/proxy/internal/storage"
 	"github.com/routatic/proxy/internal/token"
-	"github.com/routatic/proxy/internal/gui"
 )
 
 // Server represents the proxy server.

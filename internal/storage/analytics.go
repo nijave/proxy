@@ -134,12 +134,12 @@ func (a *Analytics) GetModelBreakdown(days int) ([]ModelBreakdown, error) {
 
 // ProviderBreakdown holds per-provider aggregates.
 type ProviderBreakdown struct {
-	Provider        string  `json:"provider"`
-	Requests        int64   `json:"requests"`
-	InputTokens     int64   `json:"input_tokens"`
-	OutputTokens    int64   `json:"output_tokens"`
-	FallbackRate    float64 `json:"fallback_rate"` // % of requests that were fallbacks
-	EstCostUSD      float64 `json:"est_cost_usd"`
+	Provider     string  `json:"provider"`
+	Requests     int64   `json:"requests"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	FallbackRate float64 `json:"fallback_rate"` // % of requests that were fallbacks
+	EstCostUSD   float64 `json:"est_cost_usd"`
 }
 
 // GetProviderBreakdown returns usage by provider (with fallback rate).
