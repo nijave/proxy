@@ -225,6 +225,7 @@ func startCmd() *cobra.Command {
 	var configPath string
 	var port int
 	var background bool
+	var headless bool
 	var daemonize bool // hidden internal flag
 
 	cmd := &cobra.Command{
@@ -345,6 +346,8 @@ Press Ctrl+C to stop both servers.`,
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+			var guiSrv *gui.Server
+
 			// Start proxy in background.
 			go func() {
 				if err := srv.Start(); err != nil && err != http.ErrServerClosed {
@@ -367,7 +370,7 @@ Press Ctrl+C to stop both servers.`,
 
 			if !headless {
 				// Start GUI server on port 3445.
-				guiSrv := gui.New(gui.Options{
+				guiSrv = gui.New(gui.Options{
 					History:      srv.History,
 					Metrics:      srv.Metrics(),
 					AtomicConfig: atomicCfg,
