@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -22,11 +21,11 @@ type GitHubRelease struct {
 	} `json:"assets"`
 }
 
-// GetLatestRelease fetches the latest release for the specified channel
-func GetLatestRelease(channel Channel) (*GitHubRelease, error) {
+// GetLatestRelease fetches the latest release for the specified channel ("stable" or "beta")
+func GetLatestRelease(channel string) (*GitHubRelease, error) {
 	var url string
 
-	if channel == ChannelBeta {
+	if channel == "beta" {
 		// For beta, get all releases and find the latest prerelease with -beta- in tag
 		url = "https://api.github.com/repos/routatic/proxy/releases?per_page=20"
 	} else {
@@ -45,7 +44,7 @@ func GetLatestRelease(channel Channel) (*GitHubRelease, error) {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
 
-	if channel == ChannelBeta {
+	if channel == "beta" {
 		// Parse as array of releases
 		var releases []GitHubRelease
 		if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
@@ -174,7 +173,7 @@ func DownloadAndInstall(url, filename string) error {
 }
 
 // CheckForUpdate checks if a newer version is available
-func CheckForUpdate(currentVersion string, channel Channel) (*GitHubRelease, error) {
+func CheckForUpdate(currentVersion string, channel string) (*GitHubRelease, error) {
 	release, err := GetLatestRelease(channel)
 	if err != nil {
 		return nil, err

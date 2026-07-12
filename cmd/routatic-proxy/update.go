@@ -20,7 +20,10 @@ Examples:
   routatic-proxy update check   # Check for updates without installing`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		channel := update.GetChannel()
+		channel, err := update.GetChannel()
+		if err != nil {
+			return fmt.Errorf("failed to get update channel: %w", err)
+		}
 		fmt.Printf("Checking for updates on %s channel...\n", channel)
 
 		// Get current version (from build info or embedded)

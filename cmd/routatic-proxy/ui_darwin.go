@@ -336,6 +336,7 @@ Use the tray icon to reopen the window or quit entirely.`,
 			StopProxy:        stopProxy,
 			CatalogDir:       resolveCatalogDir(configPath),
 			CatalogSourceURL: cfg.Catalog.SourceURL,
+			Storage:          proxySrv.Storage(),
 		})
 		guiSrv.SetProxyRunning(proxyInitiallyStarted)
 

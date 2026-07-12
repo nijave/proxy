@@ -227,6 +227,7 @@ Press Ctrl+C to stop.`,
 			StopProxy:        stopProxy,
 			CatalogDir:       resolveCatalogDir(configPath),
 			CatalogSourceURL: cfg.Catalog.SourceURL,
+			Storage:          proxySrv.Storage(),
 		})
 
 		// Set the connected flag now that guiSrv exists

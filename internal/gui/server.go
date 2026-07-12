@@ -12,8 +12,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,9 +139,17 @@ func (s *Server) getProxyPort() int {
 	return s.proxyPort
 }
 
-// Start starts the embedded HTTP server on a random localhost port and returns
-// the URL that the webview should load.
+const guiPort = 3445
+
+// Start starts the embedded HTTP server on port 3445 and returns
+// the URL that the webview should load. If another routatic-proxy instance
+// is using that port, it is killed before binding.
 func (s *Server) Start(ctx context.Context) (string, error) {
+	// Ensure port 3445 is free, killing any existing routatic-proxy GUI.
+	if err := s.ensurePortAvailable(guiPort); err != nil {
+		return "", fmt.Errorf("gui port check: %w", err)
+	}
+
 	mux := http.NewServeMux()
 
 	// Static assets — strip the "assets/" prefix so index.html is served at /.
@@ -174,7 +185,7 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 		mux.HandleFunc("/api/analytics/latency", ah.LatencyStats)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", guiPort))
 	if err != nil {
 		return "", fmt.Errorf("gui server listen: %w", err)
 	}
@@ -555,6 +566,87 @@ func (s *Server) handleCatalogStats(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// ensurePortAvailable checks if port 3445 is in use by another routatic-proxy
+// instance and kills it. Returns an error if the port is in use by a different process.
+func (s *Server) ensurePortAvailable(port int) error {
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		// Port is free
+		return nil
+	}
+	_ = conn.Close()
+
+	// Port is in use - check if it's us via the /api/metrics endpoint
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/metrics", port))
+	if err != nil {
+		return fmt.Errorf("port %d in use by unknown process (no HTTP response)", port)
+	}
+	defer resp.Body.Close()
+
+	// Check if this is our GUI server by looking for proxy_running field
+	var m struct {
+		ProxyRunning bool `json:"proxy_running"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
+		// This is our GUI server - kill it
+		s.logger.Info("killing existing routatic-proxy GUI on port", "port", port)
+		return s.killProcessOnPort(port)
+	}
+
+	return fmt.Errorf("port %d in use by unknown process (not routatic-proxy)", port)
+}
+
+// killProcessOnPort terminates the process listening on the given port.
+func (s *Server) killProcessOnPort(port int) error {
+	// Use lsof to find the PID
+	cmd := exec.Command("lsof", "-t", "-i", fmt.Sprintf(":%d", port))
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to find process on port %d: %w", port, err)
+	}
+
+	pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, pidStr := range pids {
+		if pidStr == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+
+		// Verify it's routatic-proxy before killing
+		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err == nil && strings.Contains(string(cmdline), "routatic-proxy") {
+			s.logger.Info("terminating routatic-proxy process", "pid", pid)
+			p, err := os.FindProcess(pid)
+			if err == nil {
+				_ = p.Signal(os.Interrupt)
+				// Wait briefly for graceful shutdown
+				time.Sleep(500 * time.Millisecond)
+				// Force kill if still running
+				_ = p.Kill()
+			}
+		} else {
+			return fmt.Errorf("port %d in use by non-routatic-proxy process (pid %d)", port, pid)
+		}
+	}
+
+	// Wait for port to be released
+	for i := 0; i < 10; i++ {
+		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			// Port is now free
+			return nil
+		}
+		_ = conn.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("port %d not released after killing process", port)
 }
 
 // securityHeadersMiddleware adds security headers to all responses.

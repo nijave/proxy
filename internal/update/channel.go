@@ -6,54 +6,48 @@ import (
 	"path/filepath"
 )
 
-// Channel represents the update channel preference
-type Channel string
-
-const (
-	ChannelStable Channel = "stable"
-	ChannelBeta   Channel = "beta"
-)
-
 // ChannelConfig stores the user's update channel preference
 type ChannelConfig struct {
-	Channel Channel `json:"channel"`
+	Channel string `json:"channel"` // "stable" or "beta"
 }
 
-// Default channel is stable
-const DefaultChannel = ChannelStable
+// DefaultChannel is the default update channel
+const DefaultChannel = "stable"
 
-// getChannelFilePath returns the path to the channel config file
-func getChannelFilePath() (string, error) {
-	configDir, err := os.UserConfigDir()
+// GetChannelConfigPath returns the path to the channel config file
+func GetChannelConfigPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, "routatic-proxy", "update-channel.json"), nil
+	configDir := filepath.Join(homeDir, ".config", "routatic-proxy")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "update-channel.json"), nil
 }
 
 // GetChannel reads the user's preferred update channel
-// Returns DefaultChannel if no preference is set or file doesn't exist
-func GetChannel() (Channel, error) {
-	path, err := getChannelFilePath()
+func GetChannel() (string, error) {
+	configPath, err := GetChannelConfigPath()
 	if err != nil {
-		return DefaultChannel, nil // Fall back to default on error
+		return DefaultChannel, nil // Return default on error
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultChannel, nil // No preference set yet
+			return DefaultChannel, nil // Default to stable
 		}
-		return DefaultChannel, nil // Fall back to default on read error
+		return DefaultChannel, nil
 	}
 
 	var config ChannelConfig
 	if err := json.Unmarshal(data, &config); err != nil {
-		return DefaultChannel, nil // Fall back to default on parse error
+		return DefaultChannel, nil
 	}
 
-	// Validate channel value
-	if config.Channel != ChannelStable && config.Channel != ChannelBeta {
+	if config.Channel != "stable" && config.Channel != "beta" {
 		return DefaultChannel, nil
 	}
 
@@ -61,20 +55,13 @@ func GetChannel() (Channel, error) {
 }
 
 // SetChannel saves the user's preferred update channel
-func SetChannel(channel Channel) error {
-	// Validate channel value
-	if channel != ChannelStable && channel != ChannelBeta {
+func SetChannel(channel string) error {
+	if channel != "stable" && channel != "beta" {
 		return os.ErrInvalid
 	}
 
-	path, err := getChannelFilePath()
+	configPath, err := GetChannelConfigPath()
 	if err != nil {
-		return err
-	}
-
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
@@ -84,14 +71,5 @@ func SetChannel(channel Channel) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
-}
-
-// IsBeta returns true if the user has selected the beta channel
-func IsBeta() bool {
-	channel, err := GetChannel()
-	if err != nil {
-		return false
-	}
-	return channel == ChannelBeta
+	return os.WriteFile(configPath, data, 0644)
 }

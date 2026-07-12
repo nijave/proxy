@@ -177,11 +177,9 @@ func (a *Analytics) GetProviderBreakdown(days int) ([]ProviderBreakdown, error) 
 	var result []ProviderBreakdown
 	for rows.Next() {
 		var pb ProviderBreakdown
-		if err := rows.Scan(&pb.Provider, &pb.Requests, &pb.InputTokens, &pb.OutputTokens, &pb.EstCostUSD); err != nil {
+		if err := rows.Scan(&pb.Provider, &pb.Requests, &pb.InputTokens, &pb.OutputTokens, &pb.EstCostUSD, &pb.FallbackRate); err != nil {
 			return nil, err
 		}
-		// Fallback rate calculation can be added later with scenario/fallback tracking
-		pb.FallbackRate = 0
 		result = append(result, pb)
 	}
 	return result, rows.Err()
