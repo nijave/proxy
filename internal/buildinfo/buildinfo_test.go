@@ -13,14 +13,7 @@ func TestVersionNotEmpty(t *testing.T) {
 	}
 }
 
-func TestBuildTimeNotEmpty(t *testing.T) {
-	if BuildTime == "" {
-		t.Error("BuildTime must not be empty")
-	}
-}
-
-func TestDateAlias(t *testing.T) {
-	// Date should be populated (either from ldflags or from init via BuildTime)
+func TestDateNotEmpty(t *testing.T) {
 	if Date == "" {
 		t.Error("Date must not be empty")
 	}
@@ -57,14 +50,14 @@ func TestStringContainsAllFields(t *testing.T) {
 	if !strings.Contains(s, Commit) {
 		t.Errorf("String() should contain Commit; got %q", s)
 	}
-	if !strings.Contains(s, BuildTime) {
-		t.Errorf("String() should contain BuildTime; got %q", s)
+	if !strings.Contains(s, Date) {
+		t.Errorf("String() should contain Date; got %q", s)
 	}
 }
 
 func TestInitDoesNotPanic(t *testing.T) {
 	// init() has already run; just ensure the package level vars are sane.
-	if Version == "" || Commit == "" || BuildTime == "" {
+	if Version == "" || Commit == "" || Date == "" {
 		t.Fatal("expected non-empty build info after package init")
 	}
 }

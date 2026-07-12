@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 )
 
 var (
@@ -11,8 +12,10 @@ var (
 	Version = "dev"
 	// Commit is the git commit SHA. Set via ldflags: -X github.com/routatic/proxy/internal/buildinfo.Commit=<sha>
 	Commit = "none"
-	// Date is the build timestamp. Set via ldflags: -X github.com/routatic/proxy/internal/buildinfo.Date=YYYY-MM-DDTHH:MM:SSZ
+	// Date is the build timestamp (alias for BuildTime for compatibility).
 	Date = "unknown"
+	// BuildTime is the build timestamp. Set via ldflags.
+	BuildTime = "unknown"
 )
 
 func init() {
@@ -32,8 +35,11 @@ func init() {
 					Commit = s.Value
 				}
 			case "vcs.time":
-				if Date == "unknown" && s.Value != "" {
-					Date = s.Value
+				if BuildTime == "unknown" && s.Value != "" {
+					BuildTime = s.Value
+					if Date == "unknown" {
+						Date = s.Value
+					}
 				}
 			}
 		}
@@ -43,6 +49,11 @@ func init() {
 // PID returns the current process ID.
 func PID() int {
 	return os.Getpid()
+}
+
+// PIDString returns the current process ID as a string.
+func PIDString() string {
+	return strconv.Itoa(os.Getpid())
 }
 
 // BinaryPath returns the absolute path to the running binary.
