@@ -223,6 +223,7 @@ Set `wire_format: "anthropic"` for models that need raw Anthropic Messages forma
 ```json
 {
   "openrouter": {
+    "name": "openrouter",
     "base_url": "https://openrouter.ai/api/v1",
     "api_key": "${OPENROUTER_API_KEY}",
     "api_keys": ["${OPENROUTER_KEY_1}", "${OPENROUTER_KEY_2}"],

@@ -283,9 +283,13 @@ func TestAWSBedrockProvider_NeedsOpenaiPath(t *testing.T) {
 		{"xai.grok-4.3", true},
 		{"xai.grok-4.5", true},
 		{"xai.grok-2-latest", true},
+		{"openai.gpt-5.5", true},
+		{"openai.gpt-5.4", true},
+		{"openai.gpt-4.1", true},
 		{"anthropic.claude-3-5-sonnet", false},
 		{"moonshotai.kimi-k2.5", false},
 		{"deepseek-v4-pro", false},
+		{"zai.glm-5", false},
 	}
 	for _, tt := range tests {
 		if got := p.needsOpenaiPath(tt.modelID); got != tt.want {
@@ -331,6 +335,12 @@ func TestAWSBedrockProvider_BedrockEndpoint(t *testing.T) {
 			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
 			modelID:  "moonshotai.kimi-k2.5",
 			wantPath: "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+		},
+		{
+			name:     "openai.gpt model uses openai path",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+			modelID:  "openai.gpt-5.5",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions",
 		},
 	}
 	for _, tt := range tests {
