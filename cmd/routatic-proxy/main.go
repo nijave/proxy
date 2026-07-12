@@ -353,22 +353,6 @@ Press Ctrl+C to stop both servers.`,
 				}
 			}()
 
-			// Start GUI server on port 3445.
-			guiSrv := gui.New(gui.Options{
-				History:      srv.History,
-				Metrics:      srv.Metrics(),
-				AtomicConfig: atomicCfg,
-				ProxyPort:    cfg.Port,
-				Storage:      srv.Storage(),
-			})
-			guiSrv.SetProxyRunning(true)
-
-			guiURL, err := guiSrv.Start(ctx)
-			if err != nil {
-				cancel()
-				return fmt.Errorf("start gui server: %w", err)
-			}
-
 			// Print startup info.
 			fmt.Printf("Starting %s v%s\n", appName, version)
 			fmt.Printf("Proxy listening on %s:%d\n", cfg.Host, cfg.Port)
@@ -381,11 +365,31 @@ Press Ctrl+C to stop both servers.`,
 				fmt.Println("  export ANTHROPIC_AUTH_TOKEN=unused")
 			}
 
-			// Open GUI (macOS: native webview, Linux/Windows: print URL)
-			if err := openGUI(guiURL); err != nil {
-				slog.Warn("GUI error", "error", err)
-				fmt.Printf("\nDashboard: %s\n", guiURL)
-				fmt.Println("\nPress Ctrl+C to stop.")
+			if !headless {
+				// Start GUI server on port 3445.
+				guiSrv := gui.New(gui.Options{
+					History:      srv.History,
+					Metrics:      srv.Metrics(),
+					AtomicConfig: atomicCfg,
+					ProxyPort:    cfg.Port,
+					Storage:      srv.Storage(),
+				})
+				guiSrv.SetProxyRunning(true)
+
+				guiURL, err := guiSrv.Start(ctx)
+				if err != nil {
+					cancel()
+					return fmt.Errorf("start gui server: %w", err)
+				}
+
+				// Open GUI (macOS: native webview, Linux/Windows: print URL)
+				if err := openGUI(guiURL); err != nil {
+					slog.Warn("GUI error", "error", err)
+					fmt.Printf("\nDashboard: %s\n", guiURL)
+					fmt.Println("\nPress Ctrl+C to stop.")
+				}
+			} else {
+				fmt.Println("\nRunning in headless mode (no dashboard). Press Ctrl+C to stop.")
 			}
 
 			// Wait for signal.
