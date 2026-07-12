@@ -24,7 +24,7 @@ run:
 	go run -ldflags "$(LDFLAGS)" $(CMD)
 
 test:
-	go test ./internal/... ./pkg/... ./cmd/... -v -race
+	go test ./... -v -race
 
 vet:
 	go vet ./...
