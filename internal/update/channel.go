@@ -7,73 +7,76 @@ import (
 	"path/filepath"
 )
 
+// Channel represents an update channel
+type Channel string
+
+const (
+	ChannelStable Channel = "stable"
+	ChannelBeta   Channel = "beta"
+)
+
 // ChannelConfig stores the user's preferred update channel
 type ChannelConfig struct {
-	Channel string `json:"channel"` // "stable" or "beta"
+	Channel Channel `json:"channel"`
 }
 
-// DefaultChannel is the default update channel
-const DefaultChannel = "stable"
-
-// ConfigFileName is the name of the channel config file
-const ConfigFileName = "update-channel.json"
-
-// GetConfigPath returns the path to the channel config file
-func GetConfigPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
+// getChannelConfigPath returns the path to the channel config file
+func getChannelConfigPath() (string, error) {
+	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+		return "", fmt.Errorf("failed to get config directory: %w", err)
 	}
 
-	configDir := filepath.Join(homeDir, ".config", "routatic-proxy")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	appConfigDir := filepath.Join(configDir, "routatic-proxy")
+	if err := os.MkdirAll(appConfigDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	return filepath.Join(configDir, ConfigFileName), nil
+	return filepath.Join(appConfigDir, "update-channel.json"), nil
 }
 
-// GetChannel reads the user's preferred channel from config
-// Returns "stable" by default if no config exists
-func GetChannel() (string, error) {
-	configPath, err := GetConfigPath()
+// GetChannel returns the user's preferred update channel, defaulting to stable
+func GetChannel() (Channel, error) {
+	configPath, err := getChannelConfigPath()
 	if err != nil {
-		return DefaultChannel, err
+		return ChannelStable, err
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultChannel, nil
+			// No config file yet, return default
+			return ChannelStable, nil
 		}
-		return DefaultChannel, fmt.Errorf("failed to read channel config: %w", err)
+		return ChannelStable, fmt.Errorf("failed to read channel config: %w", err)
 	}
 
-	var cfg ChannelConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return DefaultChannel, fmt.Errorf("failed to parse channel config: %w", err)
+	var config ChannelConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return ChannelStable, fmt.Errorf("failed to parse channel config: %w", err)
 	}
 
-	if cfg.Channel == "" {
-		return DefaultChannel, nil
+	// Validate channel
+	if config.Channel != ChannelStable && config.Channel != ChannelBeta {
+		return ChannelStable, nil
 	}
 
-	return cfg.Channel, nil
+	return config.Channel, nil
 }
 
-// SetChannel saves the user's preferred channel to config
-func SetChannel(channel string) error {
-	if channel != "stable" && channel != "beta" {
-		return fmt.Errorf("invalid channel %q: must be 'stable' or 'beta'", channel)
+// SetChannel saves the user's preferred update channel
+func SetChannel(channel Channel) error {
+	if channel != ChannelStable && channel != ChannelBeta {
+		return fmt.Errorf("invalid channel: %s (must be 'stable' or 'beta')", channel)
 	}
 
-	configPath, err := GetConfigPath()
+	configPath, err := getChannelConfigPath()
 	if err != nil {
 		return err
 	}
 
-	cfg := ChannelConfig{Channel: channel}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	config := ChannelConfig{Channel: channel}
+	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal channel config: %w", err)
 	}

@@ -10,10 +10,10 @@ import (
 var updateChannelCmd = &cobra.Command{
 	Use:   "update-channel [stable|beta]",
 	Short: "Switch between stable and beta update channels",
-	Long: `Switch between stable (production) and beta (early access) update channels.
+	Long: `Switch between update channels:
 
-By default, updates come from the stable channel. Use this command to opt into
-beta releases for early access to new features.
+  stable - Default channel with production releases (recommended for most users)
+  beta   - Early access to beta releases with the latest features
 
 Examples:
   routatic-proxy update-channel beta    # Switch to beta channel
@@ -25,26 +25,25 @@ Examples:
 			// Show current channel
 			channel, err := update.GetChannel()
 			if err != nil {
-				return fmt.Errorf("failed to get update channel: %w", err)
+				return fmt.Errorf("failed to get current channel: %w", err)
 			}
 			fmt.Printf("Current update channel: %s\n", channel)
 			fmt.Println("\nTo switch channels:")
-			fmt.Println("  routatic-proxy update-channel beta    # Early access releases")
-			fmt.Println("  routatic-proxy update-channel stable  # Production releases (default)")
+			fmt.Println("  routatic-proxy update-channel stable  # Production releases")
+			fmt.Println("  routatic-proxy update-channel beta    # Beta releases")
 			return nil
 		}
 
 		channel := update.Channel(args[0])
+
 		if err := update.SetChannel(channel); err != nil {
-			return fmt.Errorf("failed to set update channel: %w", err)
+			return err
 		}
 
 		if channel == update.ChannelBeta {
-			fmt.Println("Switched to beta update channel.")
-			fmt.Println("You will now receive beta (early access) releases when running 'routatic-proxy update'.")
+			fmt.Println("You will now receive beta releases when running 'routatic-proxy update'.")
 			fmt.Println("To switch back to stable releases, run: routatic-proxy update-channel stable")
 		} else {
-			fmt.Println("Switched to stable update channel.")
 			fmt.Println("You will now receive stable (production) releases when running 'routatic-proxy update'.")
 			fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
 		}
