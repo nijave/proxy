@@ -6,16 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/routatic/proxy/internal/catalog"
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/daemon"
 	"github.com/routatic/proxy/internal/debug"
+	"github.com/routatic/proxy/internal/gui"
 	"github.com/routatic/proxy/internal/server"
 	"github.com/routatic/proxy/internal/storage"
 	"github.com/spf13/cobra"
@@ -55,7 +59,7 @@ Legacy ~/.config/oc-go-cc/config.json and OC_GO_CC_* environment variables are s
 	rootCmd.AddCommand(catalogCmd())
 	rootCmd.AddCommand(autostartCmd())
 	rootCmd.AddCommand(updateCmd)
-	addPlatformCommands(rootCmd)
+	rootCmd.AddCommand(startCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -212,6 +216,141 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&background, "background", "b", false, "Run as background daemon")
 	cmd.Flags().BoolVar(&daemonize, "_daemonize", false, "Internal use only")
 	_ = cmd.Flags().MarkHidden("_daemonize")
+
+	return cmd
+}
+
+// startCmd returns the command to start both the proxy server and GUI dashboard.
+func startCmd() *cobra.Command {
+	var configPath string
+	var port int
+
+	cmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the proxy server with dashboard",
+		Long: `Start the proxy server and GUI dashboard together.
+
+The proxy runs on the configured port (default 3456), and the dashboard
+is available at http://127.0.0.1:3445. All usage data is persisted to
+SQLite regardless of whether the dashboard is open.
+
+Press Ctrl+C to stop both servers.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Override config path if provided.
+			if configPath != "" {
+				_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
+			}
+
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			if err := ensureCatalogSynced(cfg, configPath, time.Now().UTC()); err != nil {
+				return fmt.Errorf("failed to sync catalog: %w", err)
+			}
+
+			// Ensure SQLite database exists.
+			if err := ensureDatabase(); err != nil {
+				return fmt.Errorf("failed to initialize database: %w", err)
+			}
+
+			// Override port if provided via flag.
+			if port != 0 {
+				cfg.Port = port
+			}
+
+			// Create atomic config for hot reload support.
+			atomicCfg := config.NewAtomicConfig(cfg, config.ResolveConfigPath())
+
+			// Re-apply CLI port override on every reload.
+			if port != 0 {
+				atomicCfg.OnReload(func(newCfg *config.Config) {
+					newCfg.Port = port
+				})
+			}
+
+			// Create and start proxy server.
+			srv, err := server.NewServer(atomicCfg, nil)
+			if err != nil {
+				return fmt.Errorf("failed to create server: %w", err)
+			}
+
+			// Start config watcher for hot reload.
+			if cfg.HotReload {
+				watchCtx, watchCancel := context.WithCancel(context.Background())
+				defer watchCancel()
+				go func() {
+					if err := config.WatchConfig(watchCtx, atomicCfg); err != nil && err != context.Canceled {
+						slog.Error("config watcher failed", "error", err)
+					}
+				}()
+			}
+
+			// Context for graceful shutdown.
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Start proxy in background.
+			go func() {
+				if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+					slog.Error("proxy server error", "error", err)
+					cancel()
+				}
+			}()
+
+			// Start GUI server on port 3445.
+			guiSrv := gui.New(gui.Options{
+				History:      srv.History,
+				Metrics:      srv.Metrics(),
+				AtomicConfig: atomicCfg,
+				ProxyPort:    cfg.Port,
+				Storage:      srv.Storage(),
+			})
+			guiSrv.SetProxyRunning(true)
+
+			guiURL, err := guiSrv.Start(ctx)
+			if err != nil {
+				cancel()
+				return fmt.Errorf("start gui server: %w", err)
+			}
+
+			// Print startup info.
+			fmt.Printf("Starting %s v%s\n", appName, version)
+			fmt.Printf("Proxy listening on %s:%d\n", cfg.Host, cfg.Port)
+			fmt.Println()
+			fmt.Println("Configure Claude Code with:")
+			fmt.Printf("  export ANTHROPIC_BASE_URL=http://%s:%d\n", cfg.Host, cfg.Port)
+			if cfg.AnthropicFirst.Enabled {
+				fmt.Println("  unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY")
+			} else {
+				fmt.Println("  export ANTHROPIC_AUTH_TOKEN=unused")
+			}
+			fmt.Println()
+			fmt.Printf("Dashboard: %s\n", guiURL)
+			fmt.Println("\nPress Ctrl+C to stop.")
+
+			// Wait for signal.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			select {
+			case <-sigCh:
+				fmt.Println("\nShutting down...")
+			case <-ctx.Done():
+			}
+
+			// Graceful shutdown.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			_ = srv.Shutdown(shutdownCtx)
+			_ = guiSrv.Shutdown(shutdownCtx)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to config file")
+	cmd.Flags().IntVarP(&port, "port", "p", 0, "Override proxy listen port")
 
 	return cmd
 }

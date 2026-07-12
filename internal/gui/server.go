@@ -139,7 +139,7 @@ func (s *Server) getProxyPort() int {
 	return s.proxyPort
 }
 
-const guiPort = 3445
+var guiPort = 3445
 
 // Start starts the embedded HTTP server on port 3445 and returns
 // the URL that the webview should load. If another routatic-proxy instance
@@ -206,6 +206,14 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 	url := "http://" + ln.Addr().String() + "/"
 	s.logger.Info("gui server started", "url", url)
 	return url, nil
+}
+
+// Shutdown gracefully stops the GUI server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Shutdown(ctx)
 }
 
 // ── API handlers ──────────────────────────────────────────────────────────────
@@ -568,35 +576,59 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// ensurePortAvailable checks if port 3445 is in use by another routatic-proxy
-// instance and kills it. Returns an error if the port is in use by a different process.
-func (s *Server) ensurePortAvailable(port int) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		// Port is free
-		return nil
-	}
-	_ = conn.Close()
-
-	// Port is in use - check if it's us via the /api/metrics endpoint
+// ensurePortAvailable finds an available port for the GUI.
+// If 3445 is free, uses it. If used by another routatic-proxy, kills it.
+// If used by a different app, increments port (up to 3454) and notifies user.
+func (s *Server) ensurePortAvailable(startPort int) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/metrics", port))
-	if err != nil {
-		return fmt.Errorf("port %d in use by unknown process (no HTTP response)", port)
-	}
-	defer resp.Body.Close()
 
-	// Check if this is our GUI server by looking for proxy_running field
-	var m struct {
-		ProxyRunning bool `json:"proxy_running"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
-		// This is our GUI server - kill it
-		s.logger.Info("killing existing routatic-proxy GUI on port", "port", port)
-		return s.killProcessOnPort(port)
+	for p := startPort; p < startPort+10; p++ {
+		// Try to bind
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err == nil {
+			_ = ln.Close()
+			guiPort = p
+			return nil
+		}
+
+		// Port in use - check if it's our GUI
+		resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/api/metrics", p))
+		if err != nil {
+			// No HTTP response → another app is using it
+			if p == startPort {
+				fmt.Printf("Port %d in use by another app, trying port %d for GUI\n", p, p+1)
+			}
+			continue
+		}
+		defer resp.Body.Close()
+
+		var m struct {
+			ProxyRunning bool `json:"proxy_running"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&m); err == nil {
+			// Our GUI - kill the existing instance
+			s.logger.Info("killing existing routatic-proxy GUI on port", "port", p)
+			if err := s.killProcessOnPort(p); err != nil {
+				return fmt.Errorf("failed to kill existing instance: %w", err)
+			}
+			// Try bind again after kill
+			ln2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+			if err == nil {
+				_ = ln2.Close()
+				guiPort = p
+				return nil
+			}
+			// Still blocked, continue to next port
+			continue
+		}
+
+		// Responded but not our metrics format → another app
+		if p == startPort {
+			fmt.Printf("Port %d in use by another app, trying port %d for GUI\n", p, p+1)
+		}
 	}
 
-	return fmt.Errorf("port %d in use by unknown process (not routatic-proxy)", port)
+	return fmt.Errorf("no available GUI port in range %d-%d", startPort, startPort+9)
 }
 
 // killProcessOnPort terminates the process listening on the given port.
@@ -605,10 +637,12 @@ func (s *Server) killProcessOnPort(port int) error {
 	cmd := exec.Command("lsof", "-t", "-i", fmt.Sprintf(":%d", port))
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to find process on port %d: %w", port, err)
+		// lsof failed or returned nothing - port might be free now
+		return nil
 	}
 
 	pids := strings.Split(strings.TrimSpace(string(output)), "\n")
+	killed := false
 	for _, pidStr := range pids {
 		if pidStr == "" {
 			continue
@@ -620,19 +654,24 @@ func (s *Server) killProcessOnPort(port int) error {
 
 		// Verify it's routatic-proxy before killing
 		cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-		if err == nil && strings.Contains(string(cmdline), "routatic-proxy") {
-			s.logger.Info("terminating routatic-proxy process", "pid", pid)
-			p, err := os.FindProcess(pid)
-			if err == nil {
-				_ = p.Signal(os.Interrupt)
-				// Wait briefly for graceful shutdown
-				time.Sleep(500 * time.Millisecond)
-				// Force kill if still running
-				_ = p.Kill()
-			}
-		} else {
-			return fmt.Errorf("port %d in use by non-routatic-proxy process (pid %d)", port, pid)
+		if err != nil {
+			continue
 		}
+		// cmdline uses null bytes as separators
+		if strings.Contains(string(cmdline), "routatic-proxy") {
+			s.logger.Info("terminating routatic-proxy process", "pid", pid)
+			p, _ := os.FindProcess(pid)
+			if p != nil {
+				_ = p.Signal(os.Interrupt)
+				time.Sleep(500 * time.Millisecond)
+				_ = p.Kill()
+				killed = true
+			}
+		}
+	}
+
+	if !killed {
+		return fmt.Errorf("no routatic-proxy process found on port %d", port)
 	}
 
 	// Wait for port to be released

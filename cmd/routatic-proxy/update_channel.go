@@ -9,38 +9,28 @@ import (
 
 var updateChannelCmd = &cobra.Command{
 	Use:   "update-channel [stable|beta]",
-	Short: "Get or set the update channel preference",
-	Long: `View or change your preferred update channel.
+	Short: "Switch between stable and beta update channels",
+	Long: `Choose which release channel to receive updates from.
 
-Channels:
-  stable  - Production releases only (default)
-  beta    - Beta releases from main branch
+Stable channel (default): Receives production releases only
+Beta channel: Receives early access beta releases for testing
 
 Examples:
-  # Show current channel
-  routatic-proxy update-channel
-
-  # Switch to beta channel
-  routatic-proxy update-channel beta
-
-  # Switch back to stable
-  routatic-proxy update-channel stable`,
+  routatic-proxy update-channel          # Show current channel
+  routatic-proxy update-channel stable   # Switch to stable releases
+  routatic-proxy update-channel beta     # Switch to beta releases`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			// Show current channel
 			channel, err := update.GetChannel()
 			if err != nil {
-				return fmt.Errorf("failed to get channel: %w", err)
+				return fmt.Errorf("failed to get update channel: %w", err)
 			}
 			fmt.Printf("Current update channel: %s\n", channel)
-			if channel == "stable" {
-				fmt.Println("You will receive stable (production) releases when running 'routatic-proxy update'.")
-				fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
-			} else {
-				fmt.Println("You will receive beta releases when running 'routatic-proxy update'.")
-				fmt.Println("To receive stable (production) releases, run: routatic-proxy update-channel stable")
-			}
+			fmt.Println("\nTo switch channels:")
+			fmt.Println("  routatic-proxy update-channel stable")
+			fmt.Println("  routatic-proxy update-channel beta")
 			return nil
 		}
 
@@ -50,17 +40,17 @@ Examples:
 		}
 
 		if err := update.SetChannel(channel); err != nil {
-			return fmt.Errorf("failed to set channel: %w", err)
+			return fmt.Errorf("failed to set update channel: %w", err)
 		}
 
 		if channel == "stable" {
-			fmt.Println("Update channel set to: stable")
-			fmt.Println("You will now receive stable (production) releases when running 'routatic-proxy update'.")
+			fmt.Println("Switched to stable (production) release channel.")
+			fmt.Println("You will now receive stable releases when running 'routatic-proxy update'.")
 			fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
 		} else {
-			fmt.Println("Update channel set to: beta")
+			fmt.Println("Switched to beta release channel.")
 			fmt.Println("You will now receive beta releases when running 'routatic-proxy update'.")
-			fmt.Println("To receive stable (production) releases, run: routatic-proxy update-channel stable")
+			fmt.Println("To receive stable releases, run: routatic-proxy update-channel stable")
 		}
 
 		return nil

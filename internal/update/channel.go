@@ -14,41 +14,40 @@ type ChannelConfig struct {
 // DefaultChannel is the default update channel
 const DefaultChannel = "stable"
 
-// GetChannelConfigPath returns the path to the channel config file
-func GetChannelConfigPath() (string, error) {
-	homeDir, err := os.UserHomeDir()
+// ConfigFileName is the name of the channel config file
+const ConfigFileName = "update-channel.json"
+
+// GetConfigPath returns the path to the channel config file
+func GetConfigPath() (string, error) {
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	configDir := filepath.Join(homeDir, ".config", "routatic-proxy")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return "", err
-	}
-	return filepath.Join(configDir, "update-channel.json"), nil
+	return filepath.Join(configDir, "routatic-proxy", ConfigFileName), nil
 }
 
 // GetChannel reads the user's preferred update channel
 func GetChannel() (string, error) {
-	configPath, err := GetChannelConfigPath()
+	configPath, err := GetConfigPath()
 	if err != nil {
-		return DefaultChannel, nil // Return default on error
+		return DefaultChannel, nil // Fall back to default if we can't determine path
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultChannel, nil // Default to stable
+			return DefaultChannel, nil // No preference set, use default
 		}
-		return DefaultChannel, nil
+		return "", err
 	}
 
 	var config ChannelConfig
 	if err := json.Unmarshal(data, &config); err != nil {
-		return DefaultChannel, nil
+		return DefaultChannel, nil // Corrupted config, use default
 	}
 
 	if config.Channel != "stable" && config.Channel != "beta" {
-		return DefaultChannel, nil
+		return DefaultChannel, nil // Invalid channel, use default
 	}
 
 	return config.Channel, nil
@@ -57,11 +56,17 @@ func GetChannel() (string, error) {
 // SetChannel saves the user's preferred update channel
 func SetChannel(channel string) error {
 	if channel != "stable" && channel != "beta" {
-		return os.ErrInvalid
+		return nil // Silently ignore invalid channels
 	}
 
-	configPath, err := GetChannelConfigPath()
+	configPath, err := GetConfigPath()
 	if err != nil {
+		return err
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
