@@ -382,7 +382,11 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     tab.classList.add('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    const contentId = 'tab-' + tab.dataset.tab;
+    document.getElementById(contentId).classList.add('active');
+    if (tab.dataset.tab === 'analytics') {
+      AnalyticsModule.load();
+    }
   });
 });
 
@@ -1075,7 +1079,7 @@ document.addEventListener('keydown', function(e) {
   // Tab shortcuts: Cmd/Ctrl + 1/2/3/4/5/6
   if ((e.metaKey || e.ctrlKey) && ['1', '2', '3', '4', '5', '6'].includes(e.key)) {
     e.preventDefault();
-    const tabs = ['overview', 'history', 'performance', 'fallback', 'settings'];
+    const tabs = ['overview', 'history', 'performance', 'fallback', 'analytics', 'settings'];
     document.querySelector(`[data-tab="${tabs[parseInt(e.key) - 1]}"]`)?.click();
   }
   // Escape to close modals (use if-else to ensure only one action)
@@ -1706,4 +1710,194 @@ const TestModule = {
 };
 
 document.addEventListener('DOMContentLoaded', () => TestModule.init());
+
+/* ── Analytics Tab (minimal, vanilla JS + SVG/CSS) ─────────────── */
+const AnalyticsModule = {
+  loaded: false,
+  palette: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6'],
+
+  init() {
+    const daysSel = document.getElementById('analytics-days');
+    const refreshBtn = document.getElementById('btn-refresh-analytics');
+    if (daysSel) daysSel.addEventListener('change', () => this.load());
+    if (refreshBtn) refreshBtn.addEventListener('click', () => this.load(true));
+  },
+
+  async load(force = false) {
+    if (this.loaded && !force) return;
+    const daysEl = document.getElementById('analytics-days');
+    const days = daysEl ? daysEl.value : 30;
+    const genEl = document.getElementById('analytics-generated');
+    if (genEl) genEl.textContent = 'Loading…';
+
+    this.setLoading(true);
+
+    try {
+      const [summaryRes, trendRes, latencyRes] = await Promise.all([
+        fetch(`/api/analytics/summary?days=${days}`),
+        fetch(`/api/analytics/tokens/trend?days=${days}`),
+        fetch(`/api/analytics/latency?days=${days}`)
+      ]);
+      if (!summaryRes.ok) throw new Error('summary fetch failed');
+      const summary = await summaryRes.json();
+      const trend = trendRes.ok ? await trendRes.json() : { trend: [] };
+      const latencyData = latencyRes.ok ? await latencyRes.json() : { stats: [] };
+
+      // merge latency into summary for KPI calc if needed
+      summary.latency = latencyData;
+
+      this.renderKPIs(summary);
+      this.renderDonuts(summary);
+      this.renderTrend(trend.trend || []);
+      if (genEl) {
+        const ts = summary.generated_at ? new Date(summary.generated_at) : new Date();
+        genEl.textContent = '· ' + ts.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+      }
+      this.loaded = true;
+    } catch (e) {
+      console.error('Analytics error:', e);
+      this.renderEmpty('Failed to load analytics');
+      if (genEl) genEl.textContent = 'Error';
+    } finally {
+      this.setLoading(false);
+    }
+  },
+
+  setLoading(isLoading) {
+    ['model-donut','provider-donut','token-trend'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.opacity = isLoading ? '0.5' : '';
+    });
+  },
+
+  renderKPIs(data) {
+    const s = data.summary || {};
+    const fmt = (n) => n != null ? Number(n).toLocaleString() : '—';
+    document.getElementById('kpi-requests').textContent = fmt(s.total_requests);
+    const totTok = (s.total_tokens_input||0) + (s.total_tokens_output||0);
+    document.getElementById('kpi-tokens').textContent = fmt(totTok);
+    document.getElementById('kpi-tokens-in').textContent = fmt(s.total_tokens_input);
+    document.getElementById('kpi-tokens-out').textContent = fmt(s.total_tokens_output);
+    const cost = s.estimated_cost_usd != null ? '$' + Number(s.estimated_cost_usd).toFixed(2) : '—';
+    document.getElementById('kpi-cost').textContent = cost;
+
+    // p95 avg
+    const stats = (data.latency && data.latency.stats) || [];
+    let p95Val = '—';
+    if (stats.length) {
+      const avg = stats.reduce((a, st) => a + (st.p95_ms || 0), 0) / stats.length;
+      p95Val = Math.round(avg) + ' ms';
+    }
+    document.getElementById('kpi-p95').textContent = p95Val;
+  },
+
+  renderDonuts(summary) {
+    this.renderDonutChart('model-donut', summary.models || [], 'requests');
+    this.renderDonutChart('provider-donut', summary.providers || [], 'requests');
+  },
+
+  renderDonutChart(containerId, items, valKey) {
+    const wrap = document.getElementById(containerId);
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    if (!items.length) {
+      wrap.innerHTML = '<div class="empty-state">No data</div>';
+      return;
+    }
+
+    const sorted = [...items].sort((a,b) => (b[valKey]||0) - (a[valKey]||0));
+    let top = sorted.slice(0,5);
+    const rest = sorted.slice(5);
+    const otherVal = rest.reduce((sum,i) => sum + (i[valKey]||0), 0);
+    if (otherVal > 0) top.push({name: 'Other', [valKey]: otherVal});
+
+    const total = top.reduce((sum,i) => sum + (i[valKey]||0), 0) || 1;
+    let segs = '';
+    let off = 0;
+    const legend = [];
+    top.forEach((it, idx) => {
+      const v = it[valKey] || 0;
+      const pct = v / total * 100;
+      const col = this.palette[idx % this.palette.length];
+      segs += `${col} ${off.toFixed(1)}% ${(off + pct).toFixed(1)}%, `;
+      off += pct;
+      legend.push(`<div class="legend-item"><span class="legend-swatch" style="background:${col}"></span><span class="legend-label">${this.escapeHtml(it.name||'Unknown')}</span><span class="legend-value">${v}</span></div>`);
+    });
+
+    const html = `<div class="donut-wrapper"><div class="donut" style="--donut-segments: ${segs.slice(0,-2)}"></div><div class="donut-legend">${legend.join('')}</div></div>`;
+    wrap.innerHTML = html;
+  },
+
+  renderTrend(points) {
+    const wrap = document.getElementById('token-trend');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (!points.length) {
+      wrap.innerHTML = '<div class="empty-state">No trend data</div>';
+      return;
+    }
+
+    const w = 620, h = 188, pad = 30;
+    const maxV = Math.max(1, ...points.map(p => Math.max(p.input_tokens||0, p.output_tokens||0)));
+    const stepX = (w - pad*2) / Math.max(1, points.length - 1);
+
+    const ptsIn = points.map((p,i) => {
+      const x = pad + i*stepX;
+      const y = h - pad - (p.input_tokens||0)/maxV * (h - pad*2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const ptsOut = points.map((p,i) => {
+      const x = pad + i*stepX;
+      const y = h - pad - (p.output_tokens||0)/maxV * (h - pad*2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+
+    const pathIn = 'M' + ptsIn.join(' L');
+    const pathOut = 'M' + ptsOut.join(' L');
+    const areaIn = pathIn + ` L${(pad + (points.length-1)*stepX).toFixed(1)},${h-pad} L${pad},${h-pad} Z`;
+    const areaOut = pathOut + ` L${(pad + (points.length-1)*stepX).toFixed(1)},${h-pad} L${pad},${h-pad} Z`;
+
+    const dots = points.map((p,i) => {
+      const x = (pad + i*stepX).toFixed(1);
+      const yIn = (h - pad - (p.input_tokens||0)/maxV*(h-pad*2)).toFixed(1);
+      const yOut = (h - pad - (p.output_tokens||0)/maxV*(h-pad*2)).toFixed(1);
+      return `<circle cx="${x}" cy="${yIn}" r="2.2" fill="#3b82f6"/><circle cx="${x}" cy="${yOut}" r="2.2" fill="#10b981"/>`;
+    }).join('');
+
+    const svg = `
+      <svg class="trend-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
+        <path d="${areaIn}" fill="#3b82f6" fill-opacity="0.12"/>
+        <path d="${areaOut}" fill="#10b981" fill-opacity="0.12"/>
+        <path d="${pathIn}" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round"/>
+        <path d="${pathOut}" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/>
+        ${dots}
+      </svg>
+      <div class="trend-legend">
+        <span><span class="swatch" style="background:#3b82f6;height:3px;width:14px;display:inline-block;border-radius:2px;margin-right:4px;"></span>Input tokens</span>
+        <span><span class="swatch" style="background:#10b981;height:3px;width:14px;display:inline-block;border-radius:2px;margin-right:4px;"></span>Output tokens</span>
+      </div>`;
+    wrap.innerHTML = svg;
+  },
+
+  renderEmpty(msg = 'No data') {
+    ['model-donut','provider-donut','token-trend'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<div class="empty-state">${msg}</div>`;
+    });
+  },
+
+  escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+};
+
+// Boot analytics module (listeners + first load if tab already active)
+setTimeout(() => {
+  AnalyticsModule.init();
+  // If analytics tab is the initial active one (rare), load it
+  if (document.getElementById('tab-analytics')?.classList.contains('active')) {
+    AnalyticsModule.load();
+  }
+}, 250);
 

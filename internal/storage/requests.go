@@ -20,11 +20,15 @@ func (r *Requests) Insert(rec history.RequestRecord) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	attempt := rec.Attempt
+	if attempt < 1 {
+		attempt = 1
+	}
 	_, err := r.db.DB().ExecContext(ctx, `
 		INSERT OR REPLACE INTO requests (
 			id, model, provider, scenario, start_time, duration_ms,
-			input_tokens, output_tokens, streaming, success, error_msg
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			input_tokens, output_tokens, streaming, success, error_msg, attempt
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		rec.ID,
 		rec.Model,
@@ -37,6 +41,7 @@ func (r *Requests) Insert(rec history.RequestRecord) error {
 		boolToInt(rec.Streaming),
 		boolToInt(rec.Success),
 		rec.ErrorMsg,
+		attempt,
 	)
 
 	return err
@@ -52,7 +57,7 @@ func (r *Requests) Last(n int) ([]history.RequestRecord, error) {
 
 	rows, err := r.db.DB().QueryContext(ctx, `
 		SELECT id, model, provider, scenario, start_time, duration_ms,
-		       input_tokens, output_tokens, streaming, success, error_msg
+		       input_tokens, output_tokens, streaming, success, error_msg, attempt
 		FROM requests
 		ORDER BY start_time DESC
 		LIMIT ?
@@ -71,7 +76,7 @@ func (r *Requests) Since(since time.Time) ([]history.RequestRecord, error) {
 
 	rows, err := r.db.DB().QueryContext(ctx, `
 		SELECT id, model, provider, scenario, start_time, duration_ms,
-		       input_tokens, output_tokens, streaming, success, error_msg
+		       input_tokens, output_tokens, streaming, success, error_msg, attempt
 		FROM requests
 		WHERE start_time >= ?
 		ORDER BY start_time DESC
@@ -125,6 +130,7 @@ func scanRequests(rows *sql.Rows) ([]history.RequestRecord, error) {
 		var startTimeStr string
 		var streaming, success int
 
+		var attempt sql.NullInt64
 		err := rows.Scan(
 			&rec.ID,
 			&rec.Model,
@@ -137,7 +143,13 @@ func scanRequests(rows *sql.Rows) ([]history.RequestRecord, error) {
 			&streaming,
 			&success,
 			&rec.ErrorMsg,
+			&attempt,
 		)
+		if attempt.Valid {
+			rec.Attempt = int(attempt.Int64)
+		} else {
+			rec.Attempt = 1
+		}
 		if err != nil {
 			return nil, err
 		}

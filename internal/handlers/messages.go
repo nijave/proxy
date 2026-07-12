@@ -600,6 +600,7 @@ func (h *MessagesHandler) handleStreaming(
 				OutputTokens: rw.usage.outputTokens,
 				Streaming:    true,
 				Success:      true,
+				Attempt:      1, // streaming fallback attempts not yet tracked in record; treat as primary
 			}
 			if h.history != nil {
 				h.history.Add(rec)
@@ -1196,6 +1197,7 @@ func (h *MessagesHandler) handleNonStreaming(
 		OutputTokens: outputTokens,
 		Streaming:    false,
 		Success:      true,
+		Attempt:      result.Attempted,
 	}
 	if h.history != nil {
 		h.history.Add(rec)

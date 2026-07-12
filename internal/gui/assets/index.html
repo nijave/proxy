@@ -37,6 +37,7 @@
     <button class="tab" data-tab="history" data-i18n="tab.history">History</button>
     <button class="tab" data-tab="performance" data-i18n="tab.performance">Performance</button>
     <button class="tab" data-tab="fallback" data-i18n="tab.fallback">Fallback</button>
+    <button class="tab" data-tab="analytics" data-i18n="tab.analytics">Analytics</button>
     <button class="tab" data-tab="settings" data-i18n="tab.settings">Settings</button>
   </nav>
 
@@ -266,6 +267,72 @@
     <div class="fallback-preview" id="fallback-preview" style="display: none;">
       <div class="fallback-preview-header" data-i18n="fallback.previewTitle">Fallback Chain Preview</div>
       <div id="fallback-preview-content"></div>
+    </div>
+  </div>
+
+  <!-- Analytics Tab -->
+  <div class="tab-content" id="tab-analytics">
+    <div class="analytics-toolbar">
+      <div>
+        <span class="section-title" style="margin:0;">Usage Analytics</span>
+        <span class="analytics-meta" id="analytics-generated"></span>
+      </div>
+      <div class="analytics-controls">
+        <select id="analytics-days" class="filter-select" aria-label="Time range">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+        <button class="btn btn-small" id="btn-refresh-analytics">Refresh</button>
+      </div>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Requests</div>
+        <div class="kpi-value" id="kpi-requests">--</div>
+        <div class="kpi-sub">requests</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Tokens</div>
+        <div class="kpi-value" id="kpi-tokens">--</div>
+        <div class="kpi-sub"><span id="kpi-tokens-in">0</span> in / <span id="kpi-tokens-out">0</span> out</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Est. Cost</div>
+        <div class="kpi-value" id="kpi-cost">--</div>
+        <div class="kpi-sub">USD (est.)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">p95 Latency</div>
+        <div class="kpi-value" id="kpi-p95">--</div>
+        <div class="kpi-sub">ms across models</div>
+      </div>
+    </div>
+
+    <!-- Donut Charts -->
+    <div class="charts-row">
+      <div class="section" style="margin-bottom:0;">
+        <div class="section-title">Requests by Model</div>
+        <div class="chart-container" id="model-donut">
+          <div class="empty-state">No data</div>
+        </div>
+      </div>
+      <div class="section" style="margin-bottom:0;">
+        <div class="section-title">Requests by Provider</div>
+        <div class="chart-container" id="provider-donut">
+          <div class="empty-state">No data</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Token Trend -->
+    <div class="section">
+      <div class="section-title">Daily Token Trend</div>
+      <div class="chart-container trend-container" id="token-trend">
+        <div class="empty-state">No trend data</div>
+      </div>
     </div>
   </div>
 

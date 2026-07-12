@@ -4,6 +4,8 @@ package storage
 import (
 	"context"
 	"database/sql"
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,6 +75,10 @@ func Open(cfg Config) (*Database, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
+	// Seed default model prices so analytics dashboard shows meaningful
+	// cost numbers immediately for new/existing installs. Idempotent.
+	_ = database.SeedDefaultModelPrices(ctx)
+
 	if cfg.VacuumOnStartup {
 		if _, err := db.ExecContext(ctx, "VACUUM"); err != nil {
 			_ = database.Close()
@@ -97,6 +103,7 @@ func (d *Database) initSchema(ctx context.Context) error {
 		streaming INTEGER,
 		success INTEGER,
 		error_msg TEXT,
+		attempt INTEGER DEFAULT 1,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -211,4 +218,59 @@ func expandPath(path string) string {
 		return filepath.Join(home, path[2:])
 	}
 	return path
+}
+
+// priceEntry defines a pricing rule for models whose id/name/display_name
+// contains the match substring. Applied only if current cost is 0/NULL.
+type priceEntry struct {
+	Match  string  `json:"match"`
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
+
+//go:embed seed_prices.json
+var defaultModelPrices []byte
+
+// SeedDefaultModelPrices inserts realistic default pricing for common models
+// (GLM, Kimi, Qwen, Grok, DeepSeek, Claude, GPT, MiniMax, Nemotron, MiMo, etc.)
+// so that /api/analytics/* endpoints immediately show non-zero USD costs
+// without requiring user config or catalog rates.
+//
+// The seeder is idempotent: it only updates rows where cost_input_per_m or
+// cost_output_per_m is NULL or 0. This preserves any prices already set by
+// catalog sync (internal/catalog) or user overrides.
+//
+// Prices are approximate current public list prices (per million tokens, USD)
+// sourced from official provider documentation and pricing pages as of
+// July 2026: OpenAI (GPT), Anthropic (Claude), Z.ai (GLM), Moonshot (Kimi),
+// Alibaba (Qwen), xAI (Grok), DeepSeek, MiniMax, NVIDIA (Nemotron), and
+// others. Free-tier variants are explicitly zeroed. Update seed_prices.json
+// to refresh values; the JSON is embedded at build time.
+func (d *Database) SeedDefaultModelPrices(ctx context.Context) error {
+	if len(defaultModelPrices) == 0 {
+		return nil
+	}
+
+	var entries []priceEntry
+	if err := json.Unmarshal(defaultModelPrices, &entries); err != nil {
+		return fmt.Errorf("parse seed_prices.json: %w", err)
+	}
+
+	for _, e := range entries {
+		if e.Match == "" {
+			continue
+		}
+		_, err := d.db.ExecContext(ctx, `
+			UPDATE models
+			SET cost_input_per_m = ?, cost_output_per_m = ?
+			WHERE (cost_input_per_m IS NULL OR cost_input_per_m = 0)
+			  AND (id LIKE '%' || ? || '%'
+			    OR name LIKE '%' || ? || '%'
+			    OR display_name LIKE '%' || ? || '%')
+		`, e.Input, e.Output, e.Match, e.Match, e.Match)
+		if err != nil {
+			return fmt.Errorf("seed price for %q: %w", e.Match, err)
+		}
+	}
+	return nil
 }

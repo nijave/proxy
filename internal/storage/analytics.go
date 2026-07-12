@@ -161,7 +161,9 @@ func (a *Analytics) GetProviderBreakdown(days int) ([]ProviderBreakdown, error) 
 			COALESCE(
 				(SUM(input_tokens) * 0 + SUM(output_tokens) * 0) / 1000000, -- placeholder; real cost via model join if needed
 				0
-			) AS est_cost_usd
+			) AS est_cost_usd,
+			-- Fallback rate: attempts > 1 are fallbacks; old rows (NULL/0) treated as primary (rate 0)
+			COALESCE(100.0 * COUNT(CASE WHEN COALESCE(attempt, 1) > 1 THEN 1 END) / NULLIF(COUNT(*), 0), 0) AS fallback_rate
 		FROM requests
 		WHERE created_at >= ?
 		GROUP BY provider
