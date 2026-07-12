@@ -600,7 +600,7 @@ func (s *Server) ensurePortAvailable(startPort int) error {
 			}
 			continue
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		var m struct {
 			ProxyRunning bool `json:"proxy_running"`
