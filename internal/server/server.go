@@ -24,6 +24,7 @@ import (
 	"github.com/routatic/proxy/internal/status"
 	"github.com/routatic/proxy/internal/storage"
 	"github.com/routatic/proxy/internal/token"
+	"github.com/routatic/proxy/internal/gui"
 )
 
 // Server represents the proxy server.
@@ -134,6 +135,15 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 	mux.HandleFunc("/v1/messages/count_tokens", healthHandler.HandleCountTokens)
 	mux.HandleFunc("/health", healthHandler.HandleHealth)
 	mux.HandleFunc("/statusline", healthHandler.HandleStatusline)
+
+	// Analytics endpoints (only when SQLite storage is available)
+	if db != nil {
+		analyticsStore := storage.NewAnalytics(db)
+		analyticsHandler := gui.NewAnalyticsHandler(analyticsStore)
+		mux.HandleFunc("/api/analytics/summary", analyticsHandler.Summary)
+		mux.HandleFunc("/api/analytics/tokens/trend", analyticsHandler.TokenTrend)
+		mux.HandleFunc("/api/analytics/latency", analyticsHandler.LatencyStats)
+	}
 
 	// Create HTTP server.
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
