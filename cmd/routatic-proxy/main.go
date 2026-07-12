@@ -242,7 +242,7 @@ Press Ctrl+C to stop both servers.`,
 				opts := daemon.BackgroundOpts{
 					ConfigPath: configPath,
 					Port:       port,
-					Command:     "start",
+					Command:    "start",
 				}
 				return daemon.ForkIntoBackground(opts)
 			}

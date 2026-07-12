@@ -32,7 +32,7 @@ Examples:
 			currentVersion = "dev"
 		}
 
-		release, err := update.GetLatestRelease(channel)
+		release, err := update.GetLatestRelease(string(channel))
 		if err != nil {
 			return fmt.Errorf("failed to check for updates: %w", err)
 		}

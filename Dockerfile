@@ -27,4 +27,4 @@ EXPOSE 3456
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://localhost:3456/health || exit 1
 
-ENTRYPOINT ["routatic-proxy", "serve"]
+ENTRYPOINT ["routatic-proxy", "start", "--headless"]
