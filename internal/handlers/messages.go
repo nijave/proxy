@@ -127,6 +127,23 @@ func (w *responseWriter) extractUsageFromSSE(b []byte) {
 			w.usage.cacheCreationInputTokens = val
 		}
 	}
+
+	// OpenAI-compatible usage keys (used by Bedrock Mantle and direct OpenAI streams)
+	if idx := strings.Index(data, `"prompt_tokens":`); idx != -1 {
+		if val, err := parseIntAfter(data, idx+len(`"prompt_tokens":`)); err == nil {
+			// Only set if not already set by Anthropic keys to avoid overwriting
+			if w.usage.inputTokens == 0 {
+				w.usage.inputTokens = val
+			}
+		}
+	}
+	if idx := strings.Index(data, `"completion_tokens":`); idx != -1 {
+		if val, err := parseIntAfter(data, idx+len(`"completion_tokens":`)); err == nil {
+			if w.usage.outputTokens == 0 {
+				w.usage.outputTokens = val
+			}
+		}
+	}
 }
 
 // parseIntAfter parses an integer value starting at the given position in the string.
