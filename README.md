@@ -29,6 +29,28 @@ A Go CLI proxy that lets you route [Claude Code](https://docs.anthropic.com/en/d
 | **OpenRouter** | Unified API for 100+ LLMs with automatic failover | Experimenting with models from multiple providers |
 | **Anthropic** | Native Claude models with anthropic-first failover mode | Claude-first workflows with OpenCode fallback |
 
+---
+
+## Supported Providers
+
+<div align="center">
+
+[![OpenCode Go](https://img.shields.io/badge/OpenCode_Go-00C853?style=for-the-badge&logo=codeforces&logoColor=white)](https://opencode.ai/docs/go/)
+[![OpenCode Zen](https://img.shields.io/badge/OpenCode_Zen-7C4DFF?style=for-the-badge&logo=codeforces&logoColor=white)](https://opencode.ai/docs/zen/)
+[![AWS Bedrock](https://img.shields.io/badge/AWS_Bedrock-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/bedrock/)
+[![OpenRouter](https://img.shields.io/badge/OpenRouter-10A37F?style=for-the-badge&logo=openai&logoColor=white)](https://openrouter.ai/)
+[![Anthropic](https://img.shields.io/badge/Anthropic-D4A574?style=for-the-badge&logo=anthropic&logoColor=black)](https://www.anthropic.com/)
+
+</div>
+
+| Provider | Description | Best For |
+|----------|-------------|----------|
+| **OpenCode Go** | High-performance open-source coding models with flat-rate pricing | Daily coding, complex reasoning, cost-effective workloads |
+| **OpenCode Zen** | Curated, tested models with pay-as-you-go pricing | Claude/GPT/Gemini access without multiple API keys |
+| **AWS Bedrock** | Enterprise-grade models on your own AWS infrastructure | Enterprises needing data sovereignty and compliance |
+| **OpenRouter** | Unified API for 100+ LLMs with automatic failover | Experimenting with models from multiple providers |
+| **Anthropic** | Native Claude models with anthropic-first failover mode | Claude-first workflows with OpenCode fallback |
+
 **Quick Links:** [Go Models](#supported-models) · [Zen Models](#opencodes-zen) · [OpenRouter Setup](#openrouter-integration) · [Anthropic Mode](#anthropic-first-failover)
 
 `routatic-proxy` sits between Claude Code and your chosen providers, intercepting Anthropic API requests, transforming them to the appropriate format (OpenAI, Anthropic, Responses, or Gemini), and forwarding them upstream. Claude Code thinks it's talking to Anthropic — but your requests go to the models and providers you configure.
@@ -259,6 +281,16 @@ See [MODELS.md](MODELS.md#deprecated-zen-models) for the complete deprecation sc
 
 [OpenRouter](https://openrouter.ai) is a unified API for 100+ LLMs from OpenAI, Anthropic, Google, Meta, Mistral, and other leading AI providers. It provides a single endpoint for accessing models from multiple vendors without managing separate API keys and integrations for each provider.
 
+### What is OpenRouter?
+
+OpenRouter acts as a universal gateway to the AI model ecosystem. Instead of maintaining separate accounts and API keys for OpenAI, Anthropic, Google, and dozens of other providers, you use a single OpenRouter API key to access them all. OpenRouter handles the routing, normalization, and billing, giving you:
+
+- **Unified API**: One endpoint, one authentication method for 100+ models
+- **Automatic failover**: If a provider is down, requests can route to alternatives
+- **Standardized pricing**: Clear per-token costs across all providers
+- **Model exploration**: Easily experiment with new models without new integrations
+- **OpenAI-compatible format**: Works with existing OpenAI SDKs and tools
+
 ### Getting Started
 
 1. Sign up at [openrouter.ai](https://openrouter.ai)
@@ -269,13 +301,22 @@ See [MODELS.md](MODELS.md#deprecated-zen-models) for the complete deprecation sc
 export ROUTATIC_PROXY_OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
 
-For key rotation or load balancing, use comma-separated keys:
+For key rotation or load balancing across multiple keys, use a comma-separated list:
 
 ```bash
 export ROUTATIC_PROXY_OPENROUTER_API_KEYS=key-1,key-2,key-3
 ```
 
-### Configuration
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ROUTATIC_PROXY_OPENROUTER_API_KEY` | Single OpenRouter API key | `sk-or-v1-...` |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | Comma-separated list for rotation | `key-1,key-2,key-3` |
+
+Precedence: `*_API_KEYS` → `*_API_KEY` → global `API_KEYS` → global `API_KEY`.
+
+### Complete Configuration Example
 
 Add the `openrouter` provider to your `config.json`:
 
@@ -297,17 +338,57 @@ Add the `openrouter` provider to your `config.json`:
       "enabled": true,
       "display_name": "Claude 3.5 Sonnet (via OpenRouter)"
     },
+    "openrouter/anthropic/claude-3-opus": {
+      "enabled": true,
+      "display_name": "Claude 3 Opus (via OpenRouter)"
+    },
+    "openrouter/anthropic/claude-3.5-haiku": {
+      "enabled": true,
+      "display_name": "Claude 3.5 Haiku (via OpenRouter)"
+    },
     "openrouter/google/gemini-2.0-flash-exp": {
       "enabled": true,
       "display_name": "Gemini 2.0 Flash (via OpenRouter)"
+    },
+    "openrouter/google/gemini-pro-1.5": {
+      "enabled": true,
+      "display_name": "Gemini 1.5 Pro (via OpenRouter)"
+    },
+    "openrouter/meta-llama/llama-3.3-70b-instruct": {
+      "enabled": true,
+      "display_name": "Llama 3.3 70B (via OpenRouter)"
+    },
+    "openrouter/meta-llama/llama-3.1-405b": {
+      "enabled": true,
+      "display_name": "Llama 3.1 405B (via OpenRouter)"
+    },
+    "openrouter/mistralai/mistral-large": {
+      "enabled": true,
+      "display_name": "Mistral Large (via OpenRouter)"
+    },
+    "openrouter/mistralai/mistral-medium": {
+      "enabled": true,
+      "display_name": "Mistral Medium (via OpenRouter)"
+    },
+    "openrouter/mistralai/mistral-small": {
+      "enabled": true,
+      "display_name": "Mistral Small (via OpenRouter)"
+    },
+    "openrouter/deepseek/deepseek-chat": {
+      "enabled": true,
+      "display_name": "DeepSeek V3 (via OpenRouter)"
+    },
+    "openrouter/perplexity/sonar-reasoning": {
+      "enabled": true,
+      "display_name": "Perplexity Sonar Reasoning (via OpenRouter)"
     }
   }
 }
 ```
 
-### Cost-Based Routing
+### Cost-Based Routing with OpenRouter
 
-Apply a penalty to OpenRouter requests to account for routing overhead:
+When using `cost_routing`, you can apply a penalty to OpenRouter requests to account for routing overhead or prefer direct providers when costs are similar:
 
 ```json
 {
@@ -321,28 +402,28 @@ Apply a penalty to OpenRouter requests to account for routing overhead:
 }
 ```
 
-This adds a small cost penalty (e.g., 5 cents per million tokens) when selecting OpenRouter models, helping the router prefer direct providers when costs are comparable.
+This adds a small cost penalty (e.g., 5 cents per million tokens) when selecting OpenRouter models, helping the router prefer direct providers when cost is comparable.
 
 ### Model Selection
 
 OpenRouter uses the `provider/model-name` format. Common model slugs:
 
-| Model Key | Provider | Notes |
-|-----------|----------|-------|
-| `openai/gpt-4o` | OpenAI | Latest GPT-4o |
-| `openai/o1` | OpenAI | Reasoning model |
-| `anthropic/claude-3.5-sonnet` | Anthropic | Claude 3.5 Sonnet |
-| `anthropic/claude-3-opus` | Anthropic | Claude 3 Opus |
-| `anthropic/claude-3.5-haiku` | Anthropic | Claude 3.5 Haiku |
-| `google/gemini-2.0-flash-exp` | Google | Gemini 2.0 Flash |
-| `google/gemini-pro-1.5` | Google | Gemini 1.5 Pro |
-| `meta-llama/llama-3.1-405b` | Meta | Llama 3.1 405B |
-| `meta-llama/llama-3.3-70b-instruct` | Meta | Llama 3.3 70B |
-| `mistralai/mistral-large` | Mistral | Mistral Large |
-| `mistralai/mistral-medium` | Mistral | Mistral Medium |
-| `mistralai/mistral-small` | Mistral | Mistral Small |
-| `deepseek/deepseek-chat` | DeepSeek | DeepSeek V3 |
-| `perplexity/sonar-reasoning` | Perplexity | Sonar Reasoning |
+| Model Key | Provider | Description | Best For |
+|-----------|----------|-------------|----------|
+| `openai/gpt-4o` | OpenAI | Latest GPT-4o multimodal model | General purpose, vision tasks |
+| `openai/o1` | OpenAI | Reasoning model (o1) | Complex reasoning, math, coding |
+| `anthropic/claude-3.5-sonnet` | Anthropic | Claude 3.5 Sonnet | Coding, analysis, writing |
+| `anthropic/claude-3-opus` | Anthropic | Claude 3 Opus | Most capable Anthropic model |
+| `anthropic/claude-3.5-haiku` | Anthropic | Claude 3.5 Haiku | Fast, cost-effective tasks |
+| `google/gemini-2.0-flash-exp` | Google | Gemini 2.0 Flash (experimental) | Low latency, high throughput |
+| `google/gemini-pro-1.5` | Google | Gemini 1.5 Pro | Long context (up to 2M tokens) |
+| `meta-llama/llama-3.3-70b-instruct` | Meta | Llama 3.3 70B | Open source, self-hostable |
+| `meta-llama/llama-3.1-405b` | Meta | Llama 3.1 405B | Largest open source model |
+| `mistralai/mistral-large` | Mistral | Mistral Large | Strong multilingual performance |
+| `mistralai/mistral-medium` | Mistral | Mistral Medium | Balanced performance/cost |
+| `mistralai/mistral-small` | Mistral | Mistral Small | Fast, efficient tasks |
+| `deepseek/deepseek-chat` | DeepSeek | DeepSeek V3 | Strong reasoning, coding |
+| `perplexity/sonar-reasoning` | Perplexity | Sonar Reasoning | Research, citations |
 
 See the full catalog at [https://openrouter.ai/models](https://openrouter.ai/models).
 
@@ -350,6 +431,8 @@ See the full catalog at [https://openrouter.ai/models](https://openrouter.ai/mod
 
 - **API Reference**: [https://openrouter.ai/docs](https://openrouter.ai/docs)
 - **OpenAI Compatibility**: [https://openrouter.ai/docs#openai-compatibility](https://openrouter.ai/docs#openai-compatibility)
+- **Provider Routing**: [https://openrouter.ai/docs#provider-routing](https://openrouter.ai/docs#provider-routing)
+- **Models Catalog**: [https://openrouter.ai/models](https://openrouter.ai/models)
 
 ## Quick Start
 
