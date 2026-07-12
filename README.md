@@ -15,24 +15,44 @@ A Go CLI proxy that lets you route [Claude Code](https://docs.anthropic.com/en/d
 
 ---
 
-## macOS GUI Version
+## GUI Version
 
-This repository provides a native macOS GUI (System Tray + Console Dashboard) for `routatic-proxy`.
+This repository provides a cross-platform GUI for `routatic-proxy` with platform-specific implementations:
 
 ### Features
 
-- **System Tray Icon** — Control the proxy server directly from the macOS status bar (Start, Stop, Autostart, Quit)
-- **Interactive Dashboard** — A beautiful native console window to view real-time request history, model usage metrics, and easily edit/save your API keys without editing JSON files
-- **App DMG Installer** — Package into a standard macOS app with custom icons and launch support
+- **System Tray Icon** — Control the proxy server directly from the system tray/menubar (Start, Stop, Autostart, Quit)
+- **Interactive Dashboard** — A beautiful dashboard to view real-time request history, model usage metrics, and easily edit/save your configuration without editing JSON files
+- **Three Dashboard Tabs:**
+  - **Overview** — Real-time metrics showing requests received, streamed, succeeded, and failed; model distribution pie chart; current configuration summary
+  - **History** — Last 1000 requests with timestamps, models used, token counts, durations, and status; filter and search capabilities
+  - **Settings** — Edit all configuration options through form inputs with validation; hot-reload support (changes apply immediately without restart)
+- **App DMG Installer** (macOS) — Package into a standard macOS app with custom icons and launch support
+
+### Platform-Specific Behavior
+
+**macOS:**
+- Native window with system tray integration (requires CGO)
+- Cocoa-based GUI framework
+- Download the `.dmg` from the **Releases** page
+
+**Linux:**
+- Browser-based GUI opened via `xdg-open` (default, no CGO required)
+- For system tray support, build with `CGO_ENABLED=1` after installing:
+  - Fedora/RHEL: `sudo dnf install libappindicator-gtk3-devel`
+  - Ubuntu/Debian: `sudo apt install libayatana-appindicator3-dev`
+
+**Windows:**
+- GUI is not supported; use CLI only
 
 ### How to Run
 
-Download the compiled `.dmg` from the **Releases** page of this repository, or run the following command directly:
-
 ```bash
-# Launch with native macOS GUI
+# Launch the GUI dashboard
 routatic-proxy ui
 ```
+
+On macOS, this opens a native window. On Linux, it opens your default browser. The GUI connects to the running proxy server automatically.
 
 ---
 
@@ -181,6 +201,7 @@ routatic-proxy status             Check if the proxy is running
 routatic-proxy init               Create default configuration file
 routatic-proxy validate           Validate configuration file
 routatic-proxy models             List all available models (Go, Zen, Bedrock)
+routatic-proxy ui                 Launch the GUI dashboard (native on macOS, browser on Linux)
 routatic-proxy autostart enable   Enable auto-start on login
 routatic-proxy autostart disable  Disable auto-start on login
 routatic-proxy autostart status   Check autostart status
@@ -205,6 +226,55 @@ routatic-proxy --version          Show version
 | [docs/howto-add-model.md](docs/howto-add-model.md)           | Adding new models (zero code changes)                           |
 | [docs/howto-custom-routing.md](docs/howto-custom-routing.md) | Customizing scenario detection and model selection              |
 | [docs/howto-debug-routing.md](docs/howto-debug-routing.md)   | Debugging routing issues and common problems                    |
+
+## Release Channels
+
+This project uses a dual release channel system:
+
+### Beta Channel (Automatic)
+
+- **Trigger:** Every push to `main` branch
+- **Version format:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS`
+- **Example:** `v1.2.3-beta-20260712-143022`
+- **GitHub release:** Marked as prerelease
+- **Docker tags:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS` and `beta-X.Y.Z`
+- **Use case:** Get the latest features and bug fixes immediately; ideal for testing and early adoption
+
+Beta releases are automatically created when code is merged to `main`. They include all binaries, checksums, and macOS DMG.
+
+### Production Channel (Manual)
+
+- **Trigger:** Manual workflow_dispatch on `releases` branch
+- **Version format:** `vX.Y.Z` (semantic versioning)
+- **Example:** `v1.2.3`
+- **GitHub release:** Marked as stable (not prerelease)
+- **Docker tags:** `vX.Y.Z`, `vX.Y`, `vX`, `latest`
+- **Use case:** Stable, tested releases for production use
+
+To create a production release:
+
+1. Ensure all changes are merged to `main` and tested via beta
+2. Create or update the `releases` branch from `main`
+3. Go to Actions → Release workflow
+4. Click "Run workflow" and specify the version (e.g., `v1.2.3`)
+5. The workflow will:
+   - Run full test suite
+   - Build cross-platform binaries
+   - Generate AI-powered changelog
+   - Create GitHub release
+   - Publish Docker images
+   - Update Homebrew tap and Scoop bucket
+
+### Version Detection
+
+The beta release workflow uses `.github/scripts/get-versions.sh` to:
+- Detect the latest production version from the `releases` branch
+- Generate a unique beta version with UTC timestamp
+- Output both versions in JSON format for the CI workflow
+
+### Upgrading
+
+Beta releases can be upgraded to production releases simply by running the production release workflow with the appropriate version number. The beta tag remains in history for reference.
 
 ## Contributing
 

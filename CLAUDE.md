@@ -136,6 +136,62 @@ The Settings tab exposes all config fields as editable form inputs. On save, onl
 
 **Nil safety:** The `/api/metrics` and `/api/history` handlers handle nil dependencies gracefully — they return zero values instead of panicking if the history or metrics instance is unavailable.
 
+## Dual Release Channel System
+
+This project uses a dual release channel system for separating beta and production releases:
+
+### Beta Channel (Automatic)
+- **Trigger:** Every push to `main` branch (see `.github/workflows/beta-release.yml`)
+- **Version format:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS` (e.g., `v1.2.3-beta-20260712-143022`)
+- **GitHub release:** Marked as `prerelease: true`
+- **Docker tags:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS` and `beta-X.Y.Z`
+
+Beta releases are fully automated and include:
+- Test suite validation
+- Cross-platform binary builds (darwin-amd64/arm64, linux-amd64/arm64, windows-amd64/arm64)
+- macOS DMG with CGO-enabled binary
+- AI-generated changelog from commits
+- Docker images for linux/amd64 and linux/arm64
+
+### Production Channel (Manual)
+- **Trigger:** Manual `workflow_dispatch` on `releases` branch (see `.github/workflows/release.yml`)
+- **Version format:** `vX.Y.Z` (semantic versioning)
+- **GitHub release:** Marked as `prerelease: false` (stable)
+- **Docker tags:** `vX.Y.Z`, `vX.Y`, `vX`, `latest`
+
+Production releases include all beta features plus:
+- Homebrew tap update (requires `HOMEBREW_PAT` secret)
+- Scoop bucket update (requires `SCOOP_PAT` secret)
+
+### Version Detection Script
+
+`.github/scripts/get-versions.sh` is used by the beta workflow to:
+1. Fetch tags from the `origin/releases` branch
+2. Find the latest production version tag matching `v[0-9]*`
+3. Generate a beta version by appending `-beta-YYYYMMDD-HHMMSS`
+4. Output both versions as JSON for CI consumption
+
+### Creating a Production Release
+
+1. Merge all changes to `main` and verify via beta
+2. Ensure `releases` branch exists and is up-to-date
+3. Go to GitHub Actions → Release workflow
+4. Click "Run workflow"
+5. Enter version (must follow `vX.Y.Z` format)
+6. Workflow validates, builds, and releases
+
+### Release Workflow Stages
+
+Both workflows share the same stages:
+
+1. **validate** — Run `go vet`, `go test -race`, and build sanity check on ubuntu-latest
+2. **release** — Build cross-platform binaries and macOS DMG on macos-latest
+3. **docker** — Publish multi-arch Docker images on ubuntu-latest
+
+Production adds:
+4. **homebrew** — Update the homebrew-tap formula
+5. **scoop** — Update the scoop-bucket manifest
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
