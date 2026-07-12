@@ -34,7 +34,6 @@ const (
 var version = "dev"
 
 func main() {
-	setupDefaultCommand()
 	rootCmd := &cobra.Command{
 		Use:     appName,
 		Aliases: []string{"oc-go-cc"},
@@ -224,6 +223,8 @@ func serveCmd() *cobra.Command {
 func startCmd() *cobra.Command {
 	var configPath string
 	var port int
+	var background bool
+	var daemonize bool // hidden internal flag
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -236,6 +237,16 @@ SQLite regardless of whether the dashboard is open.
 
 Press Ctrl+C to stop both servers.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Handle background mode: fork and exit parent
+			if background && !daemonize {
+				opts := daemon.BackgroundOpts{
+					ConfigPath: configPath,
+					Port:       port,
+					Command:     "start",
+				}
+				return daemon.ForkIntoBackground(opts)
+			}
+
 			// Override config path if provided.
 			if configPath != "" {
 				_ = os.Setenv("ROUTATIC_PROXY_CONFIG", configPath)
@@ -259,6 +270,48 @@ Press Ctrl+C to stop both servers.`,
 			if port != 0 {
 				cfg.Port = port
 			}
+
+			pidPath := getPIDPath()
+
+			// Check if already running before writing this process' PID.
+			if !daemonize {
+				if pid, err := daemon.GetPID(pidPath); err == nil {
+					// Check if process is still running.
+					if daemon.IsProcessRunning(pid) {
+						return fmt.Errorf("server is already running (PID %d)", pid)
+					}
+					// Stale PID file, clean up.
+					_ = os.Remove(pidPath)
+				}
+			}
+
+			// Daemonize setup (child process after re-exec).
+			if daemonize {
+				paths, err := daemon.DefaultPaths()
+				if err != nil {
+					return err
+				}
+				if err := paths.EnsureConfigDir(); err != nil {
+					return err
+				}
+				if err := daemon.DaemonizeSetup(paths); err != nil {
+					return err
+				}
+			} else {
+				// Ensure config directory exists before writing PID file.
+				paths, err := daemon.DefaultPaths()
+				if err != nil {
+					return err
+				}
+				if err := paths.EnsureConfigDir(); err != nil {
+					return err
+				}
+				// Write PID file for foreground mode.
+				if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
+					return fmt.Errorf("failed to write PID file: %w", err)
+				}
+			}
+			defer func() { _ = os.Remove(pidPath) }()
 
 			// Create atomic config for hot reload support.
 			atomicCfg := config.NewAtomicConfig(cfg, config.ResolveConfigPath())
@@ -351,6 +404,9 @@ Press Ctrl+C to stop both servers.`,
 
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to config file")
 	cmd.Flags().IntVarP(&port, "port", "p", 0, "Override proxy listen port")
+	cmd.Flags().BoolVarP(&background, "background", "b", false, "Run as background daemon")
+	cmd.Flags().BoolVar(&daemonize, "_daemonize", false, "Internal use only")
+	_ = cmd.Flags().MarkHidden("_daemonize")
 
 	return cmd
 }
