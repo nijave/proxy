@@ -273,3 +273,71 @@ func TestIsBedrock(t *testing.T) {
 		}
 	}
 }
+
+func TestAWSBedrockProvider_NeedsOpenaiPath(t *testing.T) {
+	p := NewAWSBedrockProvider(nil)
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{"xai.grok-4.3", true},
+		{"xai.grok-4.5", true},
+		{"xai.grok-2-latest", true},
+		{"anthropic.claude-3-5-sonnet", false},
+		{"moonshotai.kimi-k2.5", false},
+		{"deepseek-v4-pro", false},
+	}
+	for _, tt := range tests {
+		if got := p.needsOpenaiPath(tt.modelID); got != tt.want {
+			t.Errorf("needsOpenaiPath(%q) = %v, want %v", tt.modelID, got, tt.want)
+		}
+	}
+}
+
+func TestAWSBedrockProvider_BedrockEndpoint(t *testing.T) {
+	p := NewAWSBedrockProvider(nil)
+	tests := []struct {
+		name     string
+		baseURL  string
+		modelID  string
+		wantPath string
+	}{
+		{
+			name:     "xai model without /openai in base",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+			modelID:  "xai.grok-4.3",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions",
+		},
+		{
+			name:     "xai model already has /openai in base",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions",
+			modelID:  "xai.grok-4.3",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions",
+		},
+		{
+			name:     "non-xai model keeps original path",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+			modelID:  "anthropic.claude-3-5-sonnet",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+		},
+		{
+			name:     "kimi model keeps original path",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+			modelID:  "moonshotai.kimi-k2.5",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				AWSBedrock: config.AWSBedrockConfig{
+					BaseURL: tt.baseURL,
+				},
+			}
+			got := p.bedrockEndpoint(cfg, tt.modelID)
+			if got != tt.wantPath {
+				t.Errorf("bedrockEndpoint(%q) = %q, want %q", tt.modelID, got, tt.wantPath)
+			}
+		})
+	}
+}

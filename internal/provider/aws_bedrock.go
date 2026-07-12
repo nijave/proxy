@@ -112,7 +112,7 @@ func (p *AWSBedrockProvider) Stream(ctx context.Context, req *core.NormalizedReq
 
 func (p *AWSBedrockProvider) executeOpenAI(ctx context.Context, req *core.NormalizedRequest, model config.ModelConfig) (*core.ExecuteResult, error) {
 	cfg := p.atomic.Get()
-	endpoint := cfg.AWSBedrock.BaseURL
+	endpoint := p.bedrockEndpoint(cfg, model.ModelID)
 	apiKey := p.bedrockAPIKey(cfg)
 
 	openaiReq := transformer.TransformRequestFromNormalized(req, model)
@@ -152,7 +152,7 @@ func (p *AWSBedrockProvider) executeOpenAI(ctx context.Context, req *core.Normal
 
 func (p *AWSBedrockProvider) streamOpenAI(ctx context.Context, req *core.NormalizedRequest, model config.ModelConfig) (io.ReadCloser, error) {
 	cfg := p.atomic.Get()
-	endpoint := cfg.AWSBedrock.BaseURL
+	endpoint := p.bedrockEndpoint(cfg, model.ModelID)
 	apiKey := p.bedrockAPIKey(cfg)
 
 	openaiReq := transformer.TransformRequestFromNormalized(req, model)
@@ -265,6 +265,23 @@ func (p *AWSBedrockProvider) bedrockAPIKey(cfg *config.Config) string {
 		return cfg.AWSBedrock.APIKey
 	}
 	return p.nextAPIKey(cfg.EffectiveAPIKeys())
+}
+
+// needsOpenaiPath returns true for models that require the /openai path prefix
+// on Bedrock Mantle. Models like xai.grok-* require this path to avoid
+// "Berm is not enabled for this account" errors.
+func (p *AWSBedrockProvider) needsOpenaiPath(modelID string) bool {
+	return strings.HasPrefix(modelID, "xai.")
+}
+
+// bedrockEndpoint returns the appropriate endpoint for a given model.
+// Some models (e.g., xai.grok) require the /openai path prefix.
+func (p *AWSBedrockProvider) bedrockEndpoint(cfg *config.Config, modelID string) string {
+	baseURL := cfg.AWSBedrock.BaseURL
+	if p.needsOpenaiPath(modelID) && !strings.Contains(baseURL, "/openai/") {
+		return strings.Replace(baseURL, "/v1/", "/openai/v1/", 1)
+	}
+	return baseURL
 }
 
 // doBedrockRequest sends an HTTP request to the Bedrock Mantle endpoint with

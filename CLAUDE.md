@@ -142,9 +142,9 @@ This project uses a dual release channel system for separating beta and producti
 
 ### Beta Channel (Automatic)
 - **Trigger:** Every push to `main` branch (see `.github/workflows/beta-release.yml`)
-- **Version format:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS` (e.g., `v1.2.3-beta-20260712-143022`)
+- **Version format:** `v{UPCOMING}.beta.{YYYYMMDD.HHMMSS}` (e.g., `v1.3.0-beta.20260712.143015`)
 - **GitHub release:** Marked as `prerelease: true`
-- **Docker tags:** `vX.Y.Z-beta-YYYYMMDD-HHMMSS` and `beta-X.Y.Z`
+- **Docker tags:** `v{UPCOMING}.beta.{YYYYMMDD.HHMMSS}` and `beta-{UPCOMING}`
 
 Beta releases are fully automated and include:
 - Test suite validation
@@ -166,10 +166,16 @@ Production releases include all beta features plus:
 ### Version Detection Script
 
 `.github/scripts/get-versions.sh` is used by the beta workflow to:
-1. Fetch tags from the `origin/releases` branch
-2. Find the latest production version tag matching `v[0-9]*`
-3. Generate a beta version by appending `-beta-YYYYMMDD-HHMMSS`
+1. Fetch tags from the `origin/releases` branch to get current production version (e.g., `v1.2.3`)
+2. Increment to the next version (e.g., `v1.3.0`) - **beta is based on upcoming release**
+3. Generate beta version by appending `.beta.{YYYYMMDD.HHMMSS}` - **timestamp ensures uniqueness even with multiple releases per day**
 4. Output both versions as JSON for CI consumption
+
+
+**Version Format Explanation:**
+- `v1.3.0` = The upcoming production version (minor incremented from latest production)
+- `beta.20260712.143015` = Timestamp-based prerelease tag
+- Full example: `v1.3.0-beta.20260712.143015`
 
 ### Creating a Production Release
 
