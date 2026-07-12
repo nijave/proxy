@@ -59,6 +59,7 @@ Legacy ~/.config/oc-go-cc/config.json and OC_GO_CC_* environment variables are s
 	rootCmd.AddCommand(autostartCmd())
 	rootCmd.AddCommand(updateCmd)
 	rootCmd.AddCommand(startCmd())
+	rootCmd.AddCommand(updateChannelCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

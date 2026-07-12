@@ -38,7 +38,7 @@ func GetLatestRelease(channel string) (*GitHubRelease, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch releases: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -110,7 +110,7 @@ func DownloadAndInstall(url, filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
@@ -122,14 +122,14 @@ func DownloadAndInstall(url, filename string) error {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	// Copy downloaded content to temp file
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Make executable on Unix
 	if runtime.GOOS != "windows" {
@@ -149,7 +149,7 @@ func DownloadAndInstall(url, filename string) error {
 	if runtime.GOOS == "windows" {
 		oldPath := execPath + ".old"
 		// Remove any previous .old file
-		os.Remove(oldPath)
+		_ = os.Remove(oldPath)
 		// Rename current executable
 		if err := os.Rename(execPath, oldPath); err != nil {
 			return fmt.Errorf("failed to rename current executable: %w", err)
@@ -157,11 +157,11 @@ func DownloadAndInstall(url, filename string) error {
 		// Move new executable into place
 		if err := os.Rename(tmpPath, execPath); err != nil {
 			// Try to restore old executable
-			os.Rename(oldPath, execPath)
+			_ = os.Rename(oldPath, execPath)
 			return fmt.Errorf("failed to install new executable: %w", err)
 		}
 		// Clean up old executable
-		os.Remove(oldPath)
+		_ = os.Remove(oldPath)
 	} else {
 		// On Unix, we can directly replace
 		if err := os.Rename(tmpPath, execPath); err != nil {

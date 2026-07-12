@@ -110,7 +110,7 @@ func (a *Analytics) GetModelBreakdown(days int) ([]ModelBreakdown, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []ModelBreakdown
 	for rows.Next() {
@@ -172,7 +172,7 @@ func (a *Analytics) GetProviderBreakdown(days int) ([]ProviderBreakdown, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []ProviderBreakdown
 	for rows.Next() {
@@ -217,7 +217,7 @@ func (a *Analytics) GetDailyTokenTrend(days int) ([]DailyTokenPoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []DailyTokenPoint
 	for rows.Next() {
