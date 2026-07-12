@@ -1,6 +1,10 @@
 package buildinfo
 
-import "runtime/debug"
+import (
+	"os"
+	"path/filepath"
+	"runtime/debug"
+)
 
 var (
 	// Version is the semantic version. Set via ldflags: -X github.com/routatic/proxy/internal/buildinfo.Version=vX.Y.Z
@@ -34,6 +38,24 @@ func init() {
 			}
 		}
 	}
+}
+
+// PID returns the current process ID.
+func PID() int {
+	return os.Getpid()
+}
+
+// BinaryPath returns the absolute path to the running binary.
+func BinaryPath() string {
+	execPath, err := os.Executable()
+	if err != nil {
+		return "unknown"
+	}
+	absPath, err := filepath.Abs(execPath)
+	if err != nil {
+		return execPath
+	}
+	return absPath
 }
 
 // String returns a human-readable build info summary.

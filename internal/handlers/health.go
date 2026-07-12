@@ -45,7 +45,7 @@ func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":     "ok",
 		"service":    "routatic-proxy",
 		"version":    buildinfo.Version,
-		"build_time": buildinfo.BuildTime,
+		"build_time": buildinfo.Date,
 		"pid":        buildinfo.PID(),
 		"binary":     buildinfo.BinaryPath(),
 		"metrics": map[string]interface{}{
