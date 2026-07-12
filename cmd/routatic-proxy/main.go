@@ -230,14 +230,15 @@ func startCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start the proxy server with dashboard",
-		Long: `Start the proxy server and GUI dashboard together.
+		Short: "Start the proxy server (with optional dashboard)",
+		Long: `Start the proxy server and optionally the GUI dashboard.
 
-The proxy runs on the configured port (default 3456), and the dashboard
-is available at http://127.0.0.1:3445. All usage data is persisted to
-SQLite regardless of whether the dashboard is open.
+The proxy runs on the configured port (default 3456). Use --headless to
+skip the dashboard (equivalent to the legacy "serve" command). The dashboard
+is available at http://127.0.0.1:3445 when not headless. All usage data
+is persisted to SQLite.
 
-Press Ctrl+C to stop both servers.`,
+Press Ctrl+C to stop the server.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Handle background mode: fork and exit parent
 			if background && !daemonize {
