@@ -30,6 +30,7 @@ type Config struct {
 	Debug                          DebugConfig              `json:"debug"`
 	Catalog                        CatalogConfig            `json:"catalog"`
 	Storage                        *StorageConfig           `json:"storage,omitempty"`
+	UpdateChannel                  string                   `json:"update_channel,omitempty"`
 }
 
 // CostRoutingConfig controls cost-aware model selection.

@@ -14,9 +14,10 @@ type AnalyticsHandler struct {
 	store *storage.Analytics
 }
 
-// NewAnalyticsHandler creates a handler backed by the given analytics store.
-func NewAnalyticsHandler(store *storage.Analytics) *AnalyticsHandler {
-	return &AnalyticsHandler{store: store}
+// NewAnalyticsHandler creates a handler backed by the given database.
+// It internally creates an Analytics store.
+func NewAnalyticsHandler(db *storage.Database) *AnalyticsHandler {
+	return &AnalyticsHandler{store: storage.NewAnalytics(db)}
 }
 
 func (h *AnalyticsHandler) writeJSON(w http.ResponseWriter, v any) {
@@ -59,9 +60,9 @@ func (h *AnalyticsHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"summary":   summary,
-		"models":    models,
-		"providers": providers,
+		"summary":      summary,
+		"models":       models,
+		"providers":    providers,
 		"generated_at": time.Now().Format(time.RFC3339),
 	}
 	h.writeJSON(w, resp)
@@ -81,7 +82,7 @@ func (h *AnalyticsHandler) TokenTrend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// LatencyStats returns latency stats per model (avg for now).
+// LatencyStats returns latency stats per model.
 func (h *AnalyticsHandler) LatencyStats(w http.ResponseWriter, r *http.Request) {
 	days := h.getDays(r)
 	stats, err := h.store.GetModelBreakdown(days)

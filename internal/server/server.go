@@ -138,8 +138,7 @@ func NewServer(atomic *config.AtomicConfig, captureLogger *debug.CaptureLogger) 
 
 	// Analytics endpoints (only when SQLite storage is available)
 	if db != nil {
-		analyticsStore := storage.NewAnalytics(db)
-		analyticsHandler := gui.NewAnalyticsHandler(analyticsStore)
+		analyticsHandler := gui.NewAnalyticsHandler(db)
 		mux.HandleFunc("/api/analytics/summary", analyticsHandler.Summary)
 		mux.HandleFunc("/api/analytics/tokens/trend", analyticsHandler.TokenTrend)
 		mux.HandleFunc("/api/analytics/latency", analyticsHandler.LatencyStats)

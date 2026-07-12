@@ -166,6 +166,14 @@ func (s *Server) Start(ctx context.Context) (string, error) {
 	mux.HandleFunc("/api/perf/aggregate", s.handlePerformanceAggregate)
 	mux.HandleFunc("/api/catalog/stats", s.handleCatalogStats)
 
+	// Analytics (only when SQLite storage is available)
+	if s.storage != nil {
+		ah := NewAnalyticsHandler(s.storage)
+		mux.HandleFunc("/api/analytics/summary", ah.Summary)
+		mux.HandleFunc("/api/analytics/tokens/trend", ah.TokenTrend)
+		mux.HandleFunc("/api/analytics/latency", ah.LatencyStats)
+	}
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", fmt.Errorf("gui server listen: %w", err)

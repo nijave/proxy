@@ -24,6 +24,7 @@ func (r *Requests) Insert(rec history.RequestRecord) error {
 	if attempt < 1 {
 		attempt = 1
 	}
+
 	_, err := r.db.DB().ExecContext(ctx, `
 		INSERT OR REPLACE INTO requests (
 			id, model, provider, scenario, start_time, duration_ms,

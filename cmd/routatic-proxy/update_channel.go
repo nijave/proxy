@@ -1,4 +1,4 @@
-package cmd
+package main
 
 import (
 	"fmt"
@@ -7,73 +7,58 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// updateChannelCmd allows users to switch between stable and beta update channels
 var updateChannelCmd = &cobra.Command{
 	Use:   "update-channel [stable|beta]",
-	Short: "Get or set the update channel (stable or beta)",
-	Long: `Get or set the update channel preference for self-updates.
+	Short: "Switch between stable and beta update channels",
+	Long: `Switch between stable (production) and beta (early access) update channels.
 
-Channels:
-  stable  - Production releases only (recommended for most users)
-  beta    - Beta/nightly releases for early access to new features
+When set to 'beta', the 'update' command will fetch pre-release versions
+from GitHub instead of stable releases.
 
 Examples:
-  # Show current channel
-  routatic-proxy update-channel
-
-  # Switch to beta channel
-  routatic-proxy update-channel beta
-
-  # Switch back to stable channel
-  routatic-proxy update-channel stable`,
+  routatic-proxy update-channel beta     # Switch to beta channel
+  routatic-proxy update-channel stable   # Switch back to stable (default)
+  routatic-proxy update-channel          # Show current channel`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
-			// Get current channel
-			channel, err := update.LoadChannel()
+			// Show current channel
+			channel, err := update.GetChannel()
 			if err != nil {
-				return fmt.Errorf("failed to load update channel: %w", err)
+				return fmt.Errorf("failed to read channel: %w", err)
 			}
 			fmt.Printf("Current update channel: %s\n", channel)
-			if channel == update.ChannelBeta {
-				fmt.Println("\nYou are receiving beta releases.")
-				fmt.Println("To switch back to stable releases, run: routatic-proxy update-channel stable")
-			} else {
-				fmt.Println("\nYou are receiving stable (production) releases.")
+			if channel == "stable" {
 				fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
+			} else {
+				fmt.Println("To receive stable (production) releases, run: routatic-proxy update-channel stable")
 			}
 			return nil
 		}
 
-		// Set channel
-		channelStr := args[0]
-		var channel update.Channel
-		switch channelStr {
-		case "stable":
-			channel = update.ChannelStable
-		case "beta":
-			channel = update.ChannelBeta
+		channel := args[0]
+		switch channel {
+		case "stable", "beta":
+			if err := update.SetChannel(update.Channel(channel)); err != nil {
+				return fmt.Errorf("failed to set channel: %w", err)
+			}
+			fmt.Printf("Update channel set to: %s\n", channel)
+			if channel == "stable" {
+				fmt.Println("You will now receive stable (production) releases when running 'routatic-proxy update'.")
+				fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
+			} else {
+				fmt.Println("You will now receive beta releases when running 'routatic-proxy update'.")
+				fmt.Println("To receive stable (production) releases, run: routatic-proxy update-channel stable")
+			}
+			return nil
 		default:
-			return fmt.Errorf("invalid channel %q: must be 'stable' or 'beta'", channelStr)
+			return fmt.Errorf("invalid channel %q: must be 'stable' or 'beta'", channel)
 		}
-
-		if err := update.SetChannel(channel); err != nil {
-			return fmt.Errorf("failed to set update channel: %w", err)
-		}
-
-		fmt.Printf("Update channel set to: %s\n", channel)
-		if channel == update.ChannelBeta {
-			fmt.Println("\nYou will now receive beta releases when running 'routatic-proxy update'.")
-			fmt.Println("Beta releases may contain new features but could also have bugs.")
-			fmt.Println("To switch back to stable releases, run: routatic-proxy update-channel stable")
-		} else {
-			fmt.Println("\nYou will now receive stable (production) releases when running 'routatic-proxy update'.")
-			fmt.Println("To receive beta releases, run: routatic-proxy update-channel beta")
-		}
-
-		return nil
 	},
 }
 
-func init() {
-	rootCmd.AddCommand(updateChannelCmd)
-}
+// TODO: wire updateChannelCmd into rootCmd when root command registration is centralized.
+// func init() {
+// 	rootCmd.AddCommand(updateChannelCmd)
+// }

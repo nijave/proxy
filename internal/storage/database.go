@@ -7,8 +7,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,6 +75,12 @@ func Open(cfg Config) (*Database, error) {
 	if err := database.initSchema(ctx); err != nil {
 		_ = database.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
+	}
+
+	// Lightweight migrations for new columns (safe on existing DBs)
+	if err := database.migrateAddAttemptColumn(ctx); err != nil {
+		// Non-fatal; log and continue so the proxy still works
+		slog.Warn("migration warning", "err", err)
 	}
 
 	// Seed default model prices so analytics dashboard shows meaningful
@@ -186,6 +194,21 @@ func (d *Database) initSchema(ctx context.Context) error {
 
 	_, err := d.db.ExecContext(ctx, schema)
 	return err
+}
+
+// migrateAddAttemptColumn adds the 'attempt' column to the requests table if it does not exist.
+// This is used for fallback-rate analytics.
+func (d *Database) migrateAddAttemptColumn(ctx context.Context) error {
+	// Try to add the column. SQLite will error if it already exists.
+	_, err := d.db.ExecContext(ctx, `ALTER TABLE requests ADD COLUMN attempt INTEGER DEFAULT 1`)
+	if err != nil {
+		// Ignore "duplicate column" errors
+		if strings.Contains(err.Error(), "duplicate column") {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (d *Database) Close() error {
