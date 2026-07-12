@@ -71,7 +71,7 @@ echo ""
 
 # Check 4: Tests
 echo -e "${YELLOW}[4/5] Running tests...${NC}"
-go test ./internal/... ./pkg/... ./cmd/... -v -race 2>&1 | while IFS= read -r line; do
+go test ./... -v -race 2>&1 | while IFS= read -r line; do
     # Suppress verbose test output, show summary
     if [[ "$line" =~ ^(PASS|FAIL|===\s+RUN|---\s+(PASS|FAIL)|coverage:) ]]; then
         echo "  $line"
