@@ -315,6 +315,12 @@ func TestAWSBedrockProvider_BedrockEndpoint(t *testing.T) {
 			wantPath: "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions",
 		},
 		{
+			name:     "zai model uses standard path",
+			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+			modelID:  "zai.glm-5",
+			wantPath: "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
+		},
+		{
 			name:     "non-xai model keeps original path",
 			baseURL:  "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions",
 			modelID:  "anthropic.claude-3-5-sonnet",

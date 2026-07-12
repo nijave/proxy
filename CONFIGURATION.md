@@ -211,6 +211,828 @@ routatic-proxy supports three providers for upstream API calls:
 
 Set `wire_format: "anthropic"` for models that need raw Anthropic Messages format (e.g., Claude on Bedrock). Requires `anthropic_base_url` to be configured.
 
+### OpenRouter (`openrouter`)
+
+- Unified API for accessing 200+ models from multiple providers (OpenAI, Anthropic, Google, Meta, Mistral, and more)
+- Uses OpenAI Chat Completions API format
+- Pay-as-you-go pricing with competitive rates
+- Set `"provider": "openrouter"` in your model config to use OpenRouter
+
+#### Configuration Schema
+
+```json
+{
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "${OPENROUTER_API_KEY}",
+    "api_keys": ["${OPENROUTER_KEY_1}", "${OPENROUTER_KEY_2}"],
+    "enabled": true
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | No | Provider display name (defaults to "openrouter") |
+| `base_url` | `string` | No | API endpoint base URL. Default: `https://openrouter.ai/api/v1` |
+| `api_key` | `string` | Yes* | Single API key for authentication. Required if `api_keys` not set |
+| `api_keys` | `string[]` | Yes* | Multiple API keys for round-robin rotation. Required if `api_key` not set |
+| `enabled` | `bool` | No | Whether this provider is active. Default: `true` |
+
+*At least one of `api_key` or `api_keys` must be configured.
+
+#### Environment Variable Overrides
+
+| Variable | Description | Precedence |
+|----------|-------------|------------|
+| `ROUTATIC_PROXY_OPENROUTER_API_KEY` | Single API key override | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | Comma-separated keys for round-robin | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_BASE_URL` | Custom base URL override | Highest |
+
+Environment variables take precedence over config file values. Config values support `${VAR}` interpolation.
+
+Precedence order: `*_API_KEYS` → `*_API_KEY` → config file `api_keys` → config file `api_key`
+
+#### Example Configurations
+
+**Single-key setup:**
+
+```json
+{
+  "openrouter": {
+    "api_key": "sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}
+```
+
+**Multi-key round-robin for load balancing:**
+
+```json
+{
+  "openrouter": {
+    "api_keys": [
+      "sk-or-v1-key-1",
+      "sk-or-v1-key-2",
+      "sk-or-v1-key-3"
+    ]
+  }
+}
+```
+
+**Custom base URL (for enterprise/self-hosted):**
+
+```json
+{
+  "openrouter": {
+    "base_url": "https://openrouter.mycompany.com/api/v1",
+    "api_key": "${OPENROUTER_API_KEY}",
+    "enabled": true
+  }
+}
+```
+
+#### Integration with Cost-Based Routing
+
+OpenRouter works seamlessly with `cost_routing`. Use `penalty_per_provider` to adjust effective costs:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter", "opencode-go"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.02,
+      "opencode-go": 0.0,
+      "aws-bedrock": 0.05
+    }
+  }
+}
+```
+
+Penalties are additive to the raw model cost. Example: a model costing $0.10/1M tokens on OpenRouter with a 0.02 penalty has effective cost $0.12/1M tokens. Use this to bias routing preferences without excluding providers entirely.
+
+#### Model Resolution via Catalog
+
+Models are referenced using the `provider/model-name` pattern. OpenRouter models use the `openrouter/` prefix:
+
+```json
+{
+  "model_overrides": {
+    "claude-opus-4": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "vision": true
+    },
+    "gpt-4o": {
+      "provider": "openrouter",
+      "model_id": "openai/gpt-4o",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "gemini-2.5-pro": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-2.5-pro-preview-07-11",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    }
+  }
+}
+```
+
+**Discovering models:**
+
+1. Visit [openrouter.ai/models](https://openrouter.ai/models) for the complete model list
+2. Use the `routatic-proxy models` command to see cached catalog entries
+3. Check the [OpenRouter API docs](https://openrouter.ai/docs) for pricing and context limits
+
+The `model_id` in your config must match OpenRouter's model identifier exactly (e.g., `anthropic/claude-opus-4`, `openai/gpt-4o`, `google/gemini-2.5-pro-preview-07-11`).
+
+#### Use Cases
+
+**Accessing specific models:** Use OpenRouter when you need models not available on other providers:
+
+```json
+{
+  "models": {
+    "complex": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "reasoning_effort": "max"
+    }
+  }
+}
+```
+
+**Fallback chains:** Include OpenRouter as a fallback when primary providers fail:
+
+```json
+{
+  "fallbacks": {
+    "default": [
+      { "provider": "opencode-go", "model_id": "deepseek-v4-pro" },
+      { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.8" },
+      { "provider": "openrouter", "model_id": "openai/gpt-4.1" }
+    ]
+  }
+}
+```
+
+**Cost optimization:** Use `cost_routing` with provider penalties to automatically select the cheapest available model:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter"],
+    "penalty_per_provider": {
+      "openrouter": -0.01
+    }
+  }
+}
+```
+
+**Specialized models:** Access niche models for specific tasks:
+
+```json
+{
+  "models": {
+    "think": {
+      "provider": "openrouter",
+      "model_id": "deepseek/deepseek-r1-free",
+      "temperature": 0.6,
+      "max_tokens": 8192
+    },
+    "long_context": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-1.5-pro",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    }
+  }
+}
+```
+
+## OpenRouter (`openrouter`)
+
+OpenRouter is an aggregation layer that routes requests to 100+ upstream providers (OpenAI, Anthropic, Google, Together, Fireworks, Groq, etc.) through a single unified API. It provides:
+
+- **Unified API surface** — one base URL and schema for dozens of providers
+- **Automatic fallbacks** — if a model is unavailable on one provider, OpenRouter can route to alternatives
+- **Cost visibility** — response metadata includes per-request pricing for transparency
+- **Key pooling** — rotate through multiple API keys to increase throughput and avoid rate limits
+
+Configure OpenRouter in the top-level `openrouter` block:
+
+```json
+{
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "${OPENROUTER_API_KEY}",
+    "api_keys": ["${OPENROUTER_KEY_1}", "${OPENROUTER_KEY_2}"],
+    "enabled": true,
+    "timeout_ms": 300000,
+    "stream_timeout_ms": 60000
+  }
+}
+```
+
+### Configuration Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | No | Provider display name (defaults to `"openrouter"`) |
+| `base_url` | `string` | No | API endpoint base URL. Default: `https://openrouter.ai/api/v1` |
+| `api_key` | `string` | Yes* | Single API key for authentication. Required if `api_keys` not set |
+| `api_keys` | `string[]` | Yes* | Multiple API keys for round-robin rotation. Required if `api_key` not set |
+| `enabled` | `bool` | No | Whether this provider is active. Default: `true` |
+| `timeout_ms` | `int` | No | Request timeout in milliseconds. Default: `300000` (5 minutes) |
+| `stream_timeout_ms` | `int` | No | Per-chunk timeout during streaming. Default: `60000` (1 minute) |
+
+*At least one of `api_key` or `api_keys` must be configured.
+
+### Environment Variable Overrides
+
+| Variable | Description | Precedence |
+|----------|-------------|------------|
+| `ROUTATIC_PROXY_OPENROUTER_API_KEY` | Single API key override | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | Comma-separated keys for round-robin (e.g., `key1,key2,key3`) | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_BASE_URL` | Custom base URL override | Highest |
+
+Environment variables take precedence over config file values. Config values support `${VAR}` interpolation.
+
+Precedence order: `*_API_KEYS` → `*_API_KEY` → config file `api_keys` → config file `api_key`
+
+### Example Configurations
+
+**Single-key setup:**
+
+```json
+{
+  "openrouter": {
+    "api_key": "sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}
+```
+
+**Multi-key round-robin for load balancing:**
+
+```json
+{
+  "openrouter": {
+    "api_keys": [
+      "sk-or-v1-key-1",
+      "sk-or-v1-key-2",
+      "sk-or-v1-key-3"
+    ]
+  }
+}
+```
+
+**Custom base URL (for enterprise/self-hosted):**
+
+```json
+{
+  "openrouter": {
+    "base_url": "https://openrouter.mycompany.com/api/v1",
+    "api_key": "${OPENROUTER_API_KEY}",
+    "enabled": true
+  }
+}
+```
+
+### Integration with Cost-Based Routing
+
+OpenRouter works seamlessly with `cost_routing`. Use `penalty_per_provider` to adjust effective costs:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter", "opencode-go"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.02,
+      "opencode-go": 0.0,
+      "aws-bedrock": 0.05
+    }
+  }
+}
+```
+
+Penalties are additive to the raw model cost. Example: a model costing $0.10/1M tokens on OpenRouter with a 0.02 penalty has effective cost $0.12/1M tokens. Use this to bias routing preferences without excluding providers entirely.
+
+### Model Resolution via Catalog
+
+Models are referenced using the `provider/model-name` pattern. OpenRouter models use the `openrouter/` prefix:
+
+```json
+{
+  "model_overrides": {
+    "claude-opus-4": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "vision": true
+    },
+    "gpt-4o": {
+      "provider": "openrouter",
+      "model_id": "openai/gpt-4o",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "gemini-2.5-pro": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-2.5-pro-preview-07-11",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    }
+  }
+}
+```
+
+**Discovering models:**
+
+1. Visit [openrouter.ai/models](https://openrouter.ai/models) for the complete model list
+2. Use the `routatic-proxy models` command to see cached catalog entries
+3. Check the [OpenRouter API docs](https://openrouter.ai/docs) for pricing and context limits
+
+The `model_id` in your config must match OpenRouter's model identifier exactly (e.g., `anthropic/claude-opus-4`, `openai/gpt-4o`, `google/gemini-2.5-pro-preview-07-11`).
+
+### Use Cases
+
+**Accessing specific models:** Use OpenRouter when you need models not available on other providers:
+
+```json
+{
+  "models": {
+    "complex": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "reasoning_effort": "max"
+    }
+  }
+}
+```
+
+**Fallback chains:** Include OpenRouter as a fallback when primary providers fail:
+
+```json
+{
+  "fallbacks": {
+    "default": [
+      { "provider": "opencode-go", "model_id": "deepseek-v4-pro" },
+      { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.8" },
+      { "provider": "openrouter", "model_id": "openai/gpt-4.1" }
+    ]
+  }
+}
+```
+
+**Cost optimization:** Use `cost_routing` with provider penalties to automatically select the cheapest available model:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter"],
+    "penalty_per_provider": {
+      "openrouter": -0.01
+    }
+  }
+}
+```
+
+**Specialized models:** Access niche models for specific tasks:
+
+```json
+{
+  "models": {
+    "think": {
+      "provider": "openrouter",
+      "model_id": "deepseek/deepseek-r1-free",
+      "temperature": 0.6,
+      "max_tokens": 8192
+    },
+    "long_context": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-1.5-pro",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    }
+  }
+}
+```
+
+
+### Configuration Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | No | Provider display name (defaults to `"openrouter"`) |
+| `base_url` | `string` | No | API endpoint base URL. Default: `https://openrouter.ai/api/v1` |
+| `api_key` | `string` | Yes* | Single API key for authentication. Required if `api_keys` not set |
+| `api_keys` | `string[]` | Yes* | Multiple API keys for round-robin rotation. Required if `api_key` not set |
+| `enabled` | `bool` | No | Whether this provider is active. Default: `true` |
+| `timeout_ms` | `int` | No | Request timeout in milliseconds. Default: `300000` (5 minutes) |
+| `stream_timeout_ms` | `int` | No | Per-chunk timeout during streaming. Default: `60000` (1 minute) |
+
+*At least one of `api_key` or `api_keys` must be configured.
+
+### Environment Variable Overrides
+
+| Variable | Description | Precedence |
+|----------|-------------|------------|
+| `ROUTATIC_PROXY_OPENROUTER_API_KEY` | Single API key override | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | Comma-separated keys for round-robin (e.g., `key1,key2,key3`) | Highest |
+| `ROUTATIC_PROXY_OPENROUTER_BASE_URL` | Custom base URL override | Highest |
+
+Environment variables take precedence over config file values. Config values support `${VAR}` interpolation.
+
+Precedence order: `*_API_KEYS` → `*_API_KEY` → config file `api_keys` → config file `api_key`
+
+### Example Configurations
+
+**Single-key setup:**
+
+```json
+{
+  "openrouter": {
+    "api_key": "sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}
+```
+
+**Multi-key round-robin for load balancing:**
+
+```json
+{
+  "openrouter": {
+    "api_keys": [
+      "sk-or-v1-key-1",
+      "sk-or-v1-key-2",
+      "sk-or-v1-key-3"
+    ]
+  }
+}
+```
+
+**Custom base URL (for enterprise/self-hosted):**
+
+```json
+{
+  "openrouter": {
+    "base_url": "https://openrouter.mycompany.com/api/v1",
+    "api_key": "${OPENROUTER_API_KEY}",
+    "enabled": true
+  }
+}
+```
+
+### Integration with Cost-Based Routing
+
+OpenRouter works seamlessly with `cost_routing`. Use `penalty_per_provider` to adjust effective costs:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter", "opencode-go"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.02,
+      "opencode-go": 0.0,
+      "aws-bedrock": 0.05
+    }
+  }
+}
+```
+
+Penalties are additive to the raw model cost. Example: a model costing $0.10/1M tokens on OpenRouter with a 0.02 penalty has effective cost $0.12/1M tokens. Use this to bias routing preferences without excluding providers entirely.
+
+### Model Resolution via Catalog
+
+Models are referenced using the `provider/model-name` pattern. OpenRouter models use the `openrouter/` prefix:
+
+```json
+{
+  "model_overrides": {
+    "claude-opus-4": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "vision": true
+    },
+    "gpt-4o": {
+      "provider": "openrouter",
+      "model_id": "openai/gpt-4o",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    },
+    "gemini-2.5-pro": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-2.5-pro-preview-07-11",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    }
+  }
+}
+```
+
+**Discovering models:**
+
+1. Visit [openrouter.ai/models](https://openrouter.ai/models) for the complete model list
+2. Use the `routatic-proxy models` command to see cached catalog entries
+3. Check the [OpenRouter API docs](https://openrouter.ai/docs) for pricing and context limits
+
+The `model_id` in your config must match OpenRouter's model identifier exactly (e.g., `anthropic/claude-opus-4`, `openai/gpt-4o`, `google/gemini-2.5-pro-preview-07-11`).
+
+### Use Cases
+
+**Accessing specific models:** Use OpenRouter when you need models not available on other providers:
+
+```json
+{
+  "models": {
+    "complex": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-opus-4",
+      "temperature": 0.7,
+      "max_tokens": 8192,
+      "reasoning_effort": "max"
+    }
+  }
+}
+```
+
+**Fallback chains:** Include OpenRouter as a fallback when primary providers fail:
+
+```json
+{
+  "fallbacks": {
+    "default": [
+      { "provider": "opencode-go", "model_id": "deepseek-v4-pro" },
+      { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.8" },
+      { "provider": "openrouter", "model_id": "openai/gpt-4.1" }
+    ]
+  }
+}
+```
+
+**Cost optimization:** Use `cost_routing` with provider penalties to automatically select the cheapest available model:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["openrouter"],
+    "penalty_per_provider": {
+      "openrouter": -0.01
+    }
+  }
+}
+```
+
+**Specialized models:** Access niche models for specific tasks:
+
+```json
+{
+  "models": {
+    "think": {
+      "provider": "openrouter",
+      "model_id": "deepseek/deepseek-r1-free",
+      "temperature": 0.6,
+      "max_tokens": 8192
+    },
+    "long_context": {
+      "provider": "openrouter",
+      "model_id": "google/gemini-1.5-pro",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    }
+  }
+}
+```
+
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `base_url` | `string` | OpenRouter API endpoint. Default: `https://openrouter.ai/api/v1`. Only change if self-hosting a compatible gateway. |
+| `api_key` | `string` | Single OpenRouter API key. Supports `${VAR}` interpolation. Use either `api_key` or `api_keys`, not both. |
+| `api_keys` | `string[]` | Pool of OpenRouter API keys for round-robin rotation. Each request picks the next key in sequence. Supports `${VAR}` interpolation. |
+| `enabled` | `bool` | Master switch. When `false`, OpenRouter is completely disabled even if keys are present. Default: `true`. |
+| `timeout_ms` | `int` | Per-request timeout for non-streaming calls. Default: `300000` (5 minutes). |
+| `stream_timeout_ms` | `int` | Idle timeout between SSE chunks for streaming responses. If no bytes arrive within this window, the stream is considered stuck and the request fails over. Default: inherits `timeout_ms`. |
+
+### Single Key vs Key Pool
+
+Use `api_key` for a single key:
+
+```json
+{
+  "openrouter": {
+    "api_key": "sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}
+```
+
+Use `api_keys` for a pool that rotates on every request (helps bypass per-key rate limits):
+
+```json
+{
+  "openrouter": {
+    "api_keys": [
+      "sk-or-v1-key-one",
+      "sk-or-v1-key-two",
+      "sk-or-v1-key-three"
+    ]
+  }
+}
+```
+
+Environment variable overrides (single key):
+
+```bash
+export ROUTATIC_PROXY_OPENROUTER_API_KEY=sk-or-v1-xxxx
+```
+
+Environment variable overrides (comma-separated pool):
+
+```bash
+export ROUTATIC_PROXY_OPENROUTER_API_KEYS=key-1,key-2,key-3
+```
+
+Precedence: `*_API_KEYS` → `*_API_KEY` → global `API_KEYS` → global `API_KEY`.
+
+### Model Routing with OpenRouter
+
+Set `"provider": "openrouter"` in any model config or fallback entry to route through OpenRouter:
+
+```json
+{
+  "models": {
+    "default": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "think": {
+      "provider": "openrouter",
+      "model_id": "openai/o3-mini",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "reasoning_effort": "high"
+    }
+  },
+  "fallbacks": {
+    "default": [
+      { "provider": "openrouter", "model_id": "google/gemini-2.0-flash" },
+      { "provider": "openrouter", "model_id": "meta-llama/llama-3.3-70b-instruct" }
+    ]
+  }
+}
+```
+
+OpenRouter model IDs use the `provider/model` format (e.g., `anthropic/claude-sonnet-4.5`, `openai/gpt-4o`, `google/gemini-2.0-flash`). See the [OpenRouter models catalog](https://openrouter.ai/models) for the full list.
+
+### Cost-Based Routing Integration
+
+When `cost_routing.enabled` is true, OpenRouter models participate in cheapest-model selection. Two settings control their behavior:
+
+**`prefer_providers`** — include or exclude OpenRouter globally:
+
+```json
+{
+  "cost_routing": {
+    "prefer_providers": ["opencode-go", "openrouter"]
+  }
+}
+```
+
+Only models whose provider is in this list are considered. To exclude OpenRouter entirely, omit it from the array.
+
+**`penalty_per_provider.openrouter`** — add a cost bias without removing the provider:
+
+```json
+{
+  "cost_routing": {
+    "penalty_per_provider": {
+      "openrouter": 0.05
+    }
+  }
+}
+```
+
+A model on OpenRouter with raw cost `2.0` and penalty `0.05` has effective cost `2.05`. Use this to prefer direct providers (lower latency, no aggregator markup) while still allowing OpenRouter as a fallback when direct options are expensive or unavailable.
+
+Example combining both:
+
+```json
+{
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "aws-bedrock", "openrouter"],
+    "max_context_window": 1000000,
+    "penalty_per_provider": {
+      "openrouter": 0.03,
+      "opencode-go": 0.01
+    }
+  }
+}
+```
+
+### Complete Example Configurations
+
+**Minimal single-key setup:**
+
+```json
+{
+  "openrouter": {
+    "api_key": "${OPENROUTER_API_KEY}"
+  },
+  "models": {
+    "default": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-3.5-sonnet"
+    }
+  }
+}
+```
+
+**High-throughput key pool with cost penalties:**
+
+```json
+{
+  "openrouter": {
+    "api_keys": [
+      "${OPENROUTER_KEY_A}",
+      "${OPENROUTER_KEY_B}",
+      "${OPENROUTER_KEY_C}"
+    ]
+  },
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "openrouter"],
+    "penalty_per_provider": {
+      "openrouter": 0.04
+    }
+  },
+  "models": {
+    "default": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-sonnet-4.5"
+    },
+    "think": {
+      "provider": "openrouter",
+      "model_id": "openai/o1-preview"
+    }
+  }
+}
+```
+
+**Hybrid: direct providers for cheap models, OpenRouter for premium Claude:**
+
+```json
+{
+  "opencode_go": {
+    "base_url": "https://opencode.ai/zen/go/v1/chat/completions"
+  },
+  "openrouter": {
+    "api_key": "${OPENROUTER_API_KEY}"
+  },
+  "cost_routing": {
+    "enabled": true,
+    "prefer_providers": ["opencode-go", "openrouter"],
+    "penalty_per_provider": {
+      "openrouter": 0.02
+    }
+  },
+  "models": {
+    "default": {
+      "provider": "opencode-go",
+      "model_id": "qwen3.7-plus"
+    },
+    "think": {
+      "provider": "openrouter",
+      "model_id": "anthropic/claude-sonnet-4.5",
+      "reasoning_effort": "high"
+    }
+  }
+}
+```
+
 ## Environment Variables
 
 Environment variables override config file values. Config values also support `${VAR}` interpolation.
@@ -223,6 +1045,8 @@ Environment variables override config file values. Config values also support `$
 | `ROUTATIC_PROXY_PORT`         | Proxy listen port                           | `3456`                                           |
 | `ROUTATIC_PROXY_OPENCODE_URL` | OpenCode Go API endpoint                    | `https://opencode.ai/zen/go/v1/chat/completions` |
 | `ROUTATIC_PROXY_OPENCODE_ZEN_URL` | OpenCode Zen API endpoint              | `https://opencode.ai/zen/v1/chat/completions`    |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEY` | OpenRouter single API key           | —                                                |
+| `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | OpenRouter key pool (comma-separated) | —                                             |
 | `ROUTATIC_PROXY_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error` | `info`                                           |
 
 Legacy equivalents such as `OC_GO_CC_API_KEY`, `OC_GO_CC_CONFIG`, and `OC_GO_CC_PORT` continue to work. When both names are set, the `ROUTATIC_PROXY_*` value wins.

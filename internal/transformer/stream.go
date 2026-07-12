@@ -24,6 +24,8 @@ var ErrClientDisconnected = fmt.Errorf("client disconnected")
 // partition). The handler decides whether to fall back to another model.
 var ErrStreamIdle = fmt.Errorf("upstream stream idle")
 
+var ErrEmptyStream = fmt.Errorf("upstream returned empty stream")
+
 // readBufPool pools read buffers for streaming operations.
 // sync.Pool reduces GC pressure under concurrent stream load by reusing
 // 4KB buffers across goroutines instead of allocating fresh ones per read.

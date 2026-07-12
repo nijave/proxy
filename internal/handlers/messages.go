@@ -59,8 +59,8 @@ type responseWriter struct {
 	mu                sync.Mutex
 	wroteHeader       bool
 	ssePayloadWritten bool
-	// usage tracks token usage from message_delta events for logging
-	usage struct {
+	contentWritten    bool
+	usage             struct {
 		inputTokens              int
 		outputTokens             int
 		cacheReadInputTokens     int
@@ -86,8 +86,8 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	}
 	if len(b) > 0 {
 		w.ssePayloadWritten = true
-		// Extract usage from message_delta events
 		w.extractUsageFromSSE(b)
+		w.detectContentInSSE(b)
 	}
 	return w.ResponseWriter.Write(b)
 }
@@ -144,6 +144,30 @@ func (w *responseWriter) extractUsageFromSSE(b []byte) {
 			}
 		}
 	}
+}
+
+func (w *responseWriter) detectContentInSSE(b []byte) {
+	data := string(b)
+	if strings.Contains(data, `"content_block_start"`) ||
+		strings.Contains(data, `"content_block_delta"`) ||
+		strings.Contains(data, `"text_delta"`) ||
+		strings.Contains(data, `"content":"`) ||
+		strings.Contains(data, `"tool_use"`) ||
+		strings.Contains(data, `"thinking_delta"`) {
+		w.contentWritten = true
+	}
+}
+
+func (w *responseWriter) hasContent() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.contentWritten
+}
+
+func (w *responseWriter) getOutputTokens() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.usage.outputTokens
 }
 
 // parseIntAfter parses an integer value starting at the given position in the string.
@@ -610,6 +634,16 @@ func (h *MessagesHandler) handleStreaming(
 				}
 				return true // continue to next model
 			}
+			if err == transformer.ErrEmptyStream {
+				h.logger.Warn("upstream "+action+" stream empty, trying next model",
+					"model", model.ModelID)
+				if rw.ssePayloadWritten {
+					h.sendStreamError(rw, "empty stream after SSE payload started")
+					h.metrics.RecordFailureForModel(model.ModelID)
+					return false // abort
+				}
+				return true // continue to next model
+			}
 			h.logger.Warn(action+" streaming failed", "model", model.ModelID, "error", err)
 			if rw.ssePayloadWritten {
 				h.sendStreamError(rw, "all upstream models failed after SSE payload started")
@@ -663,6 +697,15 @@ func (h *MessagesHandler) handleStreaming(
 						errProxy = fmt.Errorf("streaming timeout (%v) exceeded", timeout)
 					}
 					if !handleStreamError(errProxy, model, wireFormat.String()) {
+						return
+					}
+					continue
+				}
+
+				if !rw.hasContent() && rw.getOutputTokens() == 0 {
+					h.logger.Warn("upstream stream returned empty response, trying next model",
+						"model", model.ModelID, "provider", model.Provider)
+					if !handleStreamError(transformer.ErrEmptyStream, model, wireFormat.String()) {
 						return
 					}
 					continue
