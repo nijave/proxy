@@ -320,6 +320,49 @@ func TestProxyStream_UsageOnlyChunk(t *testing.T) {
 	}
 }
 
+// TestProxyStream_NestedCacheTokens covers providers (e.g. GLM/Zhipu) that
+// report cache accounting via the standard OpenAI prompt_tokens_details
+// shape instead of DeepSeek's flat prompt_cache_hit_tokens/miss_tokens
+// fields. Before this fix, PromptTokensDetails was never parsed in the
+// streaming path either, so these providers' cache hits reported as zero.
+func TestProxyStream_NestedCacheTokens(t *testing.T) {
+	handler := NewStreamHandler()
+	w := newMockResponseWriter()
+	body := sseLines(
+		`{"choices":[{"delta":{"content":"Hello"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":33487,"completion_tokens":57,"total_tokens":33544,"prompt_tokens_details":{"cached_tokens":28224}}}`,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := handler.ProxyStream(w, body, "glm-5.2", ctx, 0, cancel); err != nil {
+		t.Fatalf("ProxyStream error: %v", err)
+	}
+
+	events := parseSSEEvents(t, w.buf.String())
+	var usage *types.Usage
+	for _, event := range events {
+		if event.Usage != nil {
+			usage = event.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatalf("no usage event found in stream: %+v", events)
+		return
+	}
+	if got, want := usage.CacheReadInputTokens, 28224; got != want {
+		t.Fatalf("CacheReadInputTokens = %d, want %d", got, want)
+	}
+	if got, want := usage.CacheCreationInputTokens, 0; got != want {
+		t.Fatalf("CacheCreationInputTokens = %d, want %d", got, want)
+	}
+	if got, want := usage.InputTokens, 33487-28224; got != want {
+		t.Fatalf("InputTokens = %d, want %d", got, want)
+	}
+}
+
 // TestProxyStream_PartialCacheTokensStreaming covers the case where
 // hit + miss < prompt_tokens in a streaming context. The leftover tokens
 // should map to input_tokens.

@@ -763,10 +763,10 @@ func usageInfoToAnthropic(usage *types.UsageInfo) *types.Usage {
 		// is the *total* prompt size. We must subtract the cache parts here
 		// for the same reason TransformResponse does — see the longer comment
 		// in response.go.
-		InputTokens:              nonNegative(usage.PromptTokens - usage.PromptCacheHitTokens - usage.PromptCacheMissTokens),
+		InputTokens:              nonNegative(usage.PromptTokens - usage.CacheReadTokens() - usage.CacheCreationTokens()),
 		OutputTokens:             usage.CompletionTokens,
-		CacheCreationInputTokens: usage.PromptCacheMissTokens,
-		CacheReadInputTokens:     usage.PromptCacheHitTokens,
+		CacheCreationInputTokens: usage.CacheCreationTokens(),
+		CacheReadInputTokens:     usage.CacheReadTokens(),
 	}
 }
 

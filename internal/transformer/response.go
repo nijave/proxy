@@ -64,10 +64,10 @@ func (t *ResponseTransformer) TransformResponse(
 			// them out, otherwise Claude Code's local context counter sees an
 			// inflated input_tokens on every turn and trips auto-compact ~5x
 			// too early on long-prefix sessions.
-			InputTokens:              nonNegative(openaiResp.Usage.PromptTokens - openaiResp.Usage.PromptCacheHitTokens - openaiResp.Usage.PromptCacheMissTokens),
+			InputTokens:              nonNegative(openaiResp.Usage.PromptTokens - openaiResp.Usage.CacheReadTokens() - openaiResp.Usage.CacheCreationTokens()),
 			OutputTokens:             openaiResp.Usage.CompletionTokens,
-			CacheCreationInputTokens: openaiResp.Usage.PromptCacheMissTokens,
-			CacheReadInputTokens:     openaiResp.Usage.PromptCacheHitTokens,
+			CacheCreationInputTokens: openaiResp.Usage.CacheCreationTokens(),
+			CacheReadInputTokens:     openaiResp.Usage.CacheReadTokens(),
 		},
 	}
 

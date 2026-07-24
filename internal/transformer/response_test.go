@@ -288,6 +288,54 @@ func TestTransformResponseWithCacheTokens(t *testing.T) {
 	}
 }
 
+// TestTransformResponseWithNestedCacheTokens covers providers (e.g. GLM/Zhipu)
+// that report cache accounting via the standard OpenAI prompt_tokens_details
+// shape instead of DeepSeek's flat prompt_cache_hit_tokens/miss_tokens fields.
+// Before this fix, PromptTokensDetails was never parsed, so these providers'
+// real cache hits were silently reported as zero.
+func TestTransformResponseWithNestedCacheTokens(t *testing.T) {
+	transformer := NewResponseTransformer()
+
+	openaiResp := &types.ChatCompletionResponse{
+		ID:     "chatcmpl-glm",
+		Object: "chat.completion",
+		Model:  "glm-5.2",
+		Choices: []types.Choice{
+			{
+				Index: 0,
+				Message: types.ChatMessage{
+					Role:    "assistant",
+					Content: contentText("ok"),
+				},
+				FinishReason: "stop",
+			},
+		},
+		Usage: types.UsageInfo{
+			PromptTokens:     33487,
+			CompletionTokens: 57,
+			TotalTokens:      33544,
+			PromptTokensDetails: &types.PromptTokensDetails{
+				CachedTokens: 28224,
+			},
+		},
+	}
+
+	anthropicResp, err := transformer.TransformResponse(openaiResp, "claude-3-sonnet")
+	if err != nil {
+		t.Fatalf("TransformResponse() error = %v", err)
+	}
+
+	if got, want := anthropicResp.Usage.CacheReadInputTokens, 28224; got != want {
+		t.Errorf("Usage.CacheReadInputTokens = %d, want %d", got, want)
+	}
+	if got, want := anthropicResp.Usage.CacheCreationInputTokens, 0; got != want {
+		t.Errorf("Usage.CacheCreationInputTokens = %d, want %d", got, want)
+	}
+	if got, want := anthropicResp.Usage.InputTokens, 33487-28224; got != want {
+		t.Errorf("Usage.InputTokens = %d, want %d", got, want)
+	}
+}
+
 // TestTransformResponseWithPartialCacheTokens covers the case where the
 // upstream's hit + miss don't fully account for prompt_tokens (e.g., a
 // portion of the prompt is below the prefix-cache minimum and reported as

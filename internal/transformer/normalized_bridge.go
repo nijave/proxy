@@ -187,8 +187,8 @@ func OpenAIResponseToNormalized(openaiResp *types.ChatCompletionResponse, modelI
 		nr.Usage = core.NormalizedUsage{
 			InputTokens:         openaiResp.Usage.PromptTokens,
 			OutputTokens:        openaiResp.Usage.CompletionTokens,
-			CacheReadTokens:     openaiResp.Usage.PromptCacheHitTokens,
-			CacheCreationTokens: openaiResp.Usage.PromptCacheMissTokens,
+			CacheReadTokens:     openaiResp.Usage.CacheReadTokens(),
+			CacheCreationTokens: openaiResp.Usage.CacheCreationTokens(),
 		}
 	}
 
