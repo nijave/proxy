@@ -133,12 +133,46 @@ type Choice struct {
 }
 
 // UsageInfo represents token usage information.
+//
+// Providers behind the same /chat/completions endpoint report cache stats in
+// two incompatible shapes: DeepSeek uses flat prompt_cache_hit_tokens /
+// prompt_cache_miss_tokens fields, while the standard OpenAI shape (used by
+// Zhipu/GLM among others) nests them under prompt_tokens_details. Both are
+// captured here; use CacheReadTokens/CacheCreationTokens rather than the raw
+// fields so callers don't silently drop one shape.
 type UsageInfo struct {
-	PromptTokens          int `json:"prompt_tokens"`
-	CompletionTokens      int `json:"completion_tokens"`
-	TotalTokens           int `json:"total_tokens"`
-	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
-	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptTokens          int                  `json:"prompt_tokens"`
+	CompletionTokens      int                  `json:"completion_tokens"`
+	TotalTokens           int                  `json:"total_tokens"`
+	PromptCacheHitTokens  int                  `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens int                  `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptTokensDetails   *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails is the standard OpenAI cache-accounting shape nested
+// under usage.prompt_tokens_details (as opposed to DeepSeek's flat fields).
+type PromptTokensDetails struct {
+	CachedTokens     int `json:"cached_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
+// CacheReadTokens returns cached-prompt tokens read this turn, preferring the
+// standard nested shape when a provider populates it and falling back to
+// DeepSeek's flat field otherwise.
+func (u UsageInfo) CacheReadTokens() int {
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	return u.PromptCacheHitTokens
+}
+
+// CacheCreationTokens returns tokens written to the cache this turn, with the
+// same shape precedence as CacheReadTokens.
+func (u UsageInfo) CacheCreationTokens() int {
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CacheWriteTokens > 0 {
+		return u.PromptTokensDetails.CacheWriteTokens
+	}
+	return u.PromptCacheMissTokens
 }
 
 // ChatCompletionChunk represents a streaming chunk from the Chat Completions API.
