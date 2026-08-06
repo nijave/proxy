@@ -34,6 +34,7 @@ The primary endpoint. Accepts Anthropic Messages API requests and returns respon
 - Otherwise, if `model` contains a family keyword configured in `model_family_overrides` (`opus`/`sonnet`/`haiku`, case-insensitive substring), that mapped model is used as primary with a scenario-derived safety net
 - Otherwise, scenario-based routing selects the model based on request content and token count
 - Set `respect_requested_model: false` in config to force scenario routing regardless of the `model` field
+- `thinking_mode` (`auto` | `strip` | `disabled` | `enabled`, optional) — forces the thinking state sent upstream, overriding the client's `thinking` field and any thinking blocks in history. `enabled` also emits `reasoning_effort` (defaults to `high`). Only applies to models whose upstream accepts these params (a no-op otherwise); the DeepSeek safety guard still wins. Available on every model config (`models`, `model_overrides`, `model_family_overrides`).
 
 **Headers:**
 

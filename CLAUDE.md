@@ -38,6 +38,8 @@ make dist    # Cross-compile for all platforms
 
 If a model's upstream doesn't support Anthropic tool format (`type: "custom"` server-tool shorthands), set `"anthropic_tools_disabled": true` in the model config to force it through the Chat Completions transform path instead of the raw Anthropic endpoint.
 
+If you need to force a specific thinking state regardless of what the client requests (e.g. disable DeepSeek's thinking-on default on the `haiku` family while leaving `sonnet` enabled), set `"thinking_mode"` on the model config — one of `"auto"` (default, client wins), `"strip"` (send no thinking param), `"disabled"` (send `{"type":"disabled"}`), or `"enabled"` (send `{"type":"enabled"}` and also emit `reasoning_effort`, defaulting to `"high"` and overridable via the `reasoning_effort` field). It works in `models`, `model_overrides`, and `model_family_overrides`, and wins over the client's `thinking` field and any thinking blocks in history. It only affects models whose upstream accepts these params (a no-op otherwise), and the DeepSeek safety guard — which forces thinking off when assistant history lacks reasoning blocks — still wins over it.
+
 **Two API endpoints:**
 
 - OpenAI endpoint (`/v1/chat/completions`) — used by most models (GLM, Kimi, MiMo, Qwen)

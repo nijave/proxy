@@ -370,6 +370,10 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	if err := validateThinkingModes(cfg); err != nil {
+		return err
+	}
+
 	if err := validateVisionModels(cfg); err != nil {
 		return err
 	}
@@ -414,6 +418,39 @@ func validateAnthropicToolsDisabled(cfg *Config) error {
 	for key, mc := range cfg.ModelFamilyOverrides {
 		if mc.AnthropicToolsDisabled {
 			fmt.Fprintf(os.Stderr, "WARNING: config: model_family_overrides[%q] has anthropic_tools_disabled=true — this is only effective on models routing to the Anthropic endpoint\n", key)
+		}
+	}
+	return nil
+}
+
+// validateThinkingMode checks that a thinking_mode value is one of the allowed
+// enum values. An empty string is valid and means "auto".
+func validateThinkingMode(mode string) error {
+	switch mode {
+	case "", ThinkingModeAuto, ThinkingModeStrip, ThinkingModeDisabled, ThinkingModeEnabled:
+		return nil
+	default:
+		return fmt.Errorf("invalid thinking_mode %q (must be %q, %q, %q, or %q)",
+			mode, ThinkingModeAuto, ThinkingModeStrip, ThinkingModeDisabled, ThinkingModeEnabled)
+	}
+}
+
+// validateThinkingModes checks thinking_mode on every model config across the
+// models, model_overrides, and model_family_overrides maps.
+func validateThinkingModes(cfg *Config) error {
+	for key, mc := range cfg.Models {
+		if err := validateThinkingMode(mc.ThinkingMode); err != nil {
+			return fmt.Errorf("models[%q]: %w", key, err)
+		}
+	}
+	for key, mc := range cfg.ModelOverrides {
+		if err := validateThinkingMode(mc.ThinkingMode); err != nil {
+			return fmt.Errorf("model_overrides[%q]: %w", key, err)
+		}
+	}
+	for key, mc := range cfg.ModelFamilyOverrides {
+		if err := validateThinkingMode(mc.ThinkingMode); err != nil {
+			return fmt.Errorf("model_family_overrides[%q]: %w", key, err)
 		}
 	}
 	return nil

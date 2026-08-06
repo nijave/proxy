@@ -508,6 +508,50 @@ func TestTransformRequestThinkingDecisionMatrix(t *testing.T) {
 			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", Thinking: json.RawMessage(`{"type":"disabled"}`), ReasoningEffort: "max"},
 			wantThink: `{"type":"disabled"}`,
 		},
+		{
+			name:      "thinking_mode disabled wins over client enabled request",
+			messages:  userOnly,
+			thinking:  json.RawMessage(`{"type":"enabled","budget_tokens":4096}`),
+			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", ThinkingMode: config.ThinkingModeDisabled},
+			wantThink: `{"type":"disabled"}`,
+		},
+		{
+			name:      "thinking_mode enabled wins over client disabled and defaults effort to high",
+			messages:  userOnly,
+			thinking:  json.RawMessage(`{"type":"disabled"}`),
+			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", ThinkingMode: config.ThinkingModeEnabled},
+			wantThink: `{"type":"enabled"}`,
+			wantEffort: func() *string {
+				s := "high"
+				return &s
+			}(),
+		},
+		{
+			name:      "thinking_mode strip emits nothing despite client enabled",
+			messages:  userOnly,
+			thinking:  json.RawMessage(`{"type":"enabled","budget_tokens":4096}`),
+			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", ThinkingMode: config.ThinkingModeStrip},
+			wantThink: "",
+		},
+		{
+			name:      "thinking_mode disabled wins over thinking history",
+			messages:  thinkingHistory,
+			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", ThinkingMode: config.ThinkingModeDisabled},
+			wantThink: `{"type":"disabled"}`,
+		},
+		{
+			name:      "thinking_mode enabled yields to deepseek history guard",
+			messages:  plainAssistantHistory,
+			model:     config.ModelConfig{ModelID: "deepseek-v4-pro", ThinkingMode: config.ThinkingModeEnabled, ReasoningEffort: "max"},
+			wantThink: `{"type":"disabled"}`,
+		},
+		{
+			name:      "thinking_mode disabled is no-op on non-reasoning model",
+			messages:  userOnly,
+			thinking:  json.RawMessage(`{"type":"enabled","budget_tokens":2048}`),
+			model:     config.ModelConfig{ModelID: "qwen3.6-plus", ThinkingMode: config.ThinkingModeDisabled},
+			wantThink: "",
+		},
 	}
 
 	for _, tt := range tests {

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -1222,5 +1223,82 @@ func TestDefaults_StreamingTimeoutFallback(t *testing.T) {
 	}
 	if cfg.OpenCodeZen.StreamTimeoutMs != 700000 {
 		t.Errorf("OpenCodeZen.StreamTimeoutMs = %d, want 700000 (should fallback to StreamingTimeoutMs)", cfg.OpenCodeZen.StreamTimeoutMs)
+	}
+}
+
+func TestLoadJSON_InvalidThinkingModeRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{
+		"api_key": "test-key",
+		"model_overrides": {
+			"deepseek-v4-flash": {
+				"provider": "opencode-go",
+				"model_id": "deepseek-v4-flash",
+				"thinking_mode": "bogus"
+			}
+		}
+	}`
+
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("OC_GO_CC_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("OC_GO_CC_CONFIG") }()
+	oldAPIKey := os.Getenv("OC_GO_CC_API_KEY")
+	_ = os.Unsetenv("OC_GO_CC_API_KEY")
+	defer func() { _ = os.Setenv("OC_GO_CC_API_KEY", oldAPIKey) }()
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected Load() to fail validation for invalid thinking_mode, got nil")
+	} else if !strings.Contains(err.Error(), "thinking_mode") {
+		t.Fatalf("expected error to mention thinking_mode, got: %v", err)
+	}
+}
+
+func TestLoadJSON_ValidThinkingModesAccepted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{
+		"api_key": "test-key",
+		"model_family_overrides": {
+			"haiku": {
+				"provider": "opencode-go",
+				"model_id": "deepseek-v4-flash",
+				"thinking_mode": "disabled"
+			},
+			"sonnet": {
+				"provider": "opencode-go",
+				"model_id": "deepseek-v4-flash",
+				"thinking_mode": "enabled"
+			},
+			"opus": {
+				"provider": "opencode-go",
+				"model_id": "deepseek-v4-flash",
+				"thinking_mode": "strip"
+			},
+			"fable": {
+				"provider": "opencode-go",
+				"model_id": "deepseek-v4-flash",
+				"thinking_mode": "auto"
+			}
+		}
+	}`
+
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("OC_GO_CC_CONFIG", cfgPath)
+	defer func() { _ = os.Unsetenv("OC_GO_CC_CONFIG") }()
+	oldAPIKey := os.Getenv("OC_GO_CC_API_KEY")
+	_ = os.Unsetenv("OC_GO_CC_API_KEY")
+	defer func() { _ = os.Setenv("OC_GO_CC_API_KEY", oldAPIKey) }()
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("expected Load() to accept valid thinking_mode values, got: %v", err)
 	}
 }

@@ -87,6 +87,35 @@ Now switching model in Claude Code (Opus / Sonnet / Haiku) switches the upstream
 
 When both an exact override and a family match apply to the same request, the exact override wins. Fallbacks resolve from `fallbacks[<family>]`, then `fallbacks["default"]`. Each entry requires a non-empty `model_id` and a provider of `opencode-go` or `opencode-zen`.
 
+### Forcing thinking off per family
+
+Some upstreams default to thinking mode (notably DeepSeek V4 Flash). To turn it off for one Claude family while leaving another on, set `thinking_mode` on the family entry:
+
+```json
+"model_family_overrides": {
+  "sonnet": { "provider": "opencode-go", "model_id": "deepseek-v4-flash", "thinking_mode": "enabled" },
+  "haiku":  { "provider": "opencode-go", "model_id": "deepseek-v4-flash", "thinking_mode": "disabled" }
+}
+```
+
+`thinking_mode` accepts one of:
+
+| Value | Effect |
+|-------|--------|
+| `"auto"` (default) | The client's `thinking` field wins — today's behavior. |
+| `"strip"` | Send no thinking param; accept the upstream default. |
+| `"disabled"` | Send `{"type":"disabled"}`. |
+| `"enabled"` | Send `{"type":"enabled"}`, plus `reasoning_effort` (defaults to `"high"`, overridable via the `reasoning_effort` field). |
+
+A non-auto `thinking_mode` overrides both the client request and any thinking blocks in conversation history.
+
+Two caveats:
+
+- **It only applies to models whose upstream accepts these params** (DeepSeek, and OpenAI-style reasoning models for `reasoning_effort`). On a model that ignores `thinking`/`reasoning_effort`, `thinking_mode` is a no-op — nothing is added or stripped.
+- **The DeepSeek safety guard still wins.** For certain request patterns (assistant history without reasoning blocks) it forces thinking off regardless of `thinking_mode`, to avoid a guaranteed upstream 400.
+
+On DeepSeek, prefer `"disabled"` over `"strip"`: `"strip"` sends nothing, so DeepSeek falls back to its thinking-on default. The field also works in `models` and `model_overrides`.
+
 ## Customize Fallback Chains
 
 Define per-scenario fallback chains:

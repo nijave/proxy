@@ -92,9 +92,19 @@ type ModelConfig struct {
 	SupportsTools          *bool           `json:"supports_tools,omitempty"`
 	ReasoningEffort        string          `json:"reasoning_effort"`
 	Thinking               json.RawMessage `json:"thinking,omitempty"`
+	ThinkingMode           string          `json:"thinking_mode,omitempty"`
 	Vision                 bool            `json:"vision"`
 	AnthropicToolsDisabled bool            `json:"anthropic_tools_disabled"`
 }
+
+// ThinkingMode values for ModelConfig.ThinkingMode. An empty string behaves
+// identically to ThinkingModeAuto (today's client-wins behavior).
+const (
+	ThinkingModeAuto     = "auto"
+	ThinkingModeStrip    = "strip"
+	ThinkingModeDisabled = "disabled"
+	ThinkingModeEnabled  = "enabled"
+)
 
 // AWSBedrockConfig holds the upstream AWS Bedrock Mantle API settings.
 type AWSBedrockConfig struct {
