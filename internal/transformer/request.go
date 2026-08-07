@@ -175,14 +175,17 @@ func HasThinkingBlocks(messages []types.Message) bool {
 // resolveThinkingAndEffort applies thinking/reasoning_effort to the OpenAI
 // request. Decision priority:
 //
-//  1. Client request — anthropicReq.Thinking set and not disabled
+//  1. Safety guard — DeepSeek + assistant history lacking thinking blocks
+//     → disabled (avoids a guaranteed 400). Wins over everything.
+//  2. Explicit thinking_mode (non-auto) → exact control, wins over client
+//     and history.
+//  3. Client request — anthropicReq.Thinking set and not disabled
 //     → forward thinking config; map budget_tokens to reasoning_effort.
-//  2. History continuity — a prior turn used thinking → keep it enabled.
-//  3. Explicit config — model.Thinking set → use it verbatim.
-//  4. Config intent — model.ReasoningEffort set without model.Thinking
-//     → enable on first turn (no assistant messages), disable only when
-//     safety guard fires (DeepSeek + history assistant msgs lack thinking).
-//  5. No config, no history → leave both unset (safety guard for DeepSeek).
+//  4. History continuity — a prior turn used thinking → keep it enabled.
+//  5. Explicit config — model.Thinking set → use it verbatim.
+//  6. Config intent — model.ReasoningEffort set without model.Thinking
+//     → enable on first turn, disable only when the safety guard fires.
+//  7. No config, no history → leave both unset (safety guard for DeepSeek).
 //
 // budgetTokensToEffort maps Anthropic budget_tokens to OpenAI reasoning_effort.
 func budgetTokensToEffort(budget int) string {
@@ -226,16 +229,42 @@ func resolveThinkingAndEffort(
 	allowThinkingParam := isDeepSeek || explicitThinking
 	allowEffortParam := isOpenAIReasoning || isDeepSeek || explicitEffort
 
-	if requestThinkingDisabled {
+	// 1. Safety guard: DeepSeek rejects thinking mode when assistant history
+	//    lacks reasoning_content, so this wins over everything — including an
+	//    explicit thinking_mode — to avoid a guaranteed 400.
+	if isDeepSeek && hasAssistant && !hasThinking {
 		if allowThinkingParam {
-			openaiReq.Thinking = anthropicReq.Thinking
+			openaiReq.Thinking = json.RawMessage(`{"type":"disabled"}`)
 		}
 		return
 	}
 
-	if isDeepSeek && hasAssistant && !hasThinking {
+	// 2. Explicit thinking_mode overrides the client request and conversation
+	//    history. Gated by allowThinkingParam/allowEffortParam so models that
+	//    reject these fields are left untouched (no-op).
+	if model.ThinkingMode != "" && model.ThinkingMode != config.ThinkingModeAuto {
+		switch model.ThinkingMode {
+		case config.ThinkingModeStrip:
+			// Emit neither param; accept the upstream default.
+		case config.ThinkingModeDisabled:
+			if allowThinkingParam {
+				openaiReq.Thinking = json.RawMessage(`{"type":"disabled"}`)
+			}
+		case config.ThinkingModeEnabled:
+			if allowThinkingParam {
+				openaiReq.Thinking = json.RawMessage(`{"type":"enabled"}`)
+			}
+			if allowEffortParam {
+				setReasoningEffort(openaiReq, model.ReasoningEffort)
+			}
+		}
+		return
+	}
+
+	// 3. Client explicitly disabled thinking → forward it.
+	if requestThinkingDisabled {
 		if allowThinkingParam {
-			openaiReq.Thinking = json.RawMessage(`{"type":"disabled"}`)
+			openaiReq.Thinking = anthropicReq.Thinking
 		}
 		return
 	}
