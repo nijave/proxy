@@ -1282,54 +1282,67 @@ func (h *MessagesHandler) handleNonStreaming(
 	ctx := r.Context()
 	startTime := time.Now()
 
-	result, responseBody, err := h.fallbackHandler.ExecuteWithFallback(
-		ctx,
-		modelChain,
-		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
-			timeout := h.client.RequestTimeout(model)
-			attemptCtx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
+	attemptFn := func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+		timeout := h.client.RequestTimeout(model)
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 
-			// Try new provider-based dispatch first.
-			if h.providerRegistry != nil {
-				if prov, ok := h.providerRegistry.Get(client.Provider(model)); ok {
-					execResult, execErr := prov.Execute(attemptCtx, normalizedReq, model)
-					if execErr != nil {
-						return nil, execErr
-					}
-					return execResult.Body, nil
+		// Try new provider-based dispatch first.
+		if h.providerRegistry != nil {
+			if prov, ok := h.providerRegistry.Get(client.Provider(model)); ok {
+				execResult, execErr := prov.Execute(attemptCtx, normalizedReq, model)
+				if execErr != nil {
+					return nil, execErr
 				}
+				return execResult.Body, nil
 			}
+		}
 
-			h.logger.Warn("provider not found in registry, falling back to old client",
-				"provider", model.Provider, "model", model.ModelID)
+		h.logger.Warn("provider not found in registry, falling back to old client",
+			"provider", model.Provider, "model", model.ModelID)
 
-			// Legacy path: Zen models use their own endpoint classification
-			if client.IsZen(model) {
-				endpointType := client.ClassifyEndpoint(model.ModelID)
-				switch endpointType {
-				case client.EndpointAnthropic:
-					if model.AnthropicToolsDisabled {
-						// Fall through to OpenAI-compatible handling below.
-					} else {
-						return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
-					}
-				case client.EndpointResponses:
-					return h.executeResponsesRequest(attemptCtx, anthropicReq, model)
-				case client.EndpointGemini:
-					return h.executeGeminiRequest(attemptCtx, anthropicReq, model)
-				default:
-					// Fall through to OpenAI-compatible handling
+		// Legacy path: Zen models use their own endpoint classification
+		if client.IsZen(model) {
+			endpointType := client.ClassifyEndpoint(model.ModelID)
+			switch endpointType {
+			case client.EndpointAnthropic:
+				if model.AnthropicToolsDisabled {
+					// Fall through to OpenAI-compatible handling below.
+				} else {
+					return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
 				}
-			} else if client.IsAnthropicModel(model.ModelID) {
-				// Go provider Anthropic-native models (MiniMax, Qwen)
-				return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
+			case client.EndpointResponses:
+				return h.executeResponsesRequest(attemptCtx, anthropicReq, model)
+			case client.EndpointGemini:
+				return h.executeGeminiRequest(attemptCtx, anthropicReq, model)
+			default:
+				// Fall through to OpenAI-compatible handling
 			}
+		} else if client.IsAnthropicModel(model.ModelID) {
+			// Go provider Anthropic-native models (MiniMax, Qwen)
+			return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
+		}
 
-			// OpenAI-compatible models (both Go and Zen)
-			return h.executeOpenAIRequest(attemptCtx, anthropicReq, model)
-		},
-	)
+		// OpenAI-compatible models (both Go and Zen)
+		return h.executeOpenAIRequest(attemptCtx, anthropicReq, model)
+	}
+
+	exec := attemptFn
+	if h.emptyRespFallback.IsEnabled() {
+		exec = func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			body, err := attemptFn(ctx, model)
+			if err != nil {
+				return nil, err
+			}
+			if !responseHasAnswerContent(body) {
+				h.logger.Warn("model returned no answer content, trying next model", "model", model.ModelID)
+				return nil, fmt.Errorf("%w: non-streaming response had no answer content", transformer.ErrEmptyStream)
+			}
+			return body, nil
+		}
+	}
+
+	result, responseBody, err := h.fallbackHandler.ExecuteWithFallback(ctx, modelChain, exec)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -1491,6 +1504,28 @@ func (h *MessagesHandler) executeGeminiRequest(
 	}
 
 	return json.Marshal(anthropicResp)
+}
+
+// responseHasAnswerContent reports whether an Anthropic-format response body
+// carries user-visible answer content: a non-empty text block or any tool_use
+// block. Bodies that fail to parse count as content — opaque payloads are not
+// classified as empty here.
+func responseHasAnswerContent(body []byte) bool {
+	var resp types.MessageResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return true
+	}
+	for _, b := range resp.Content {
+		switch b.Type {
+		case "text":
+			if strings.TrimSpace(b.Text) != "" {
+				return true
+			}
+		case "tool_use":
+			return true
+		}
+	}
+	return false
 }
 
 // extractTextFromBlocks extracts plain text from Anthropic content blocks.

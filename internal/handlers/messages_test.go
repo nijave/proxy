@@ -2337,3 +2337,90 @@ func TestHandleStreaming_LegacyPath_ThinkingOnly_AbortsWithError(t *testing.T) {
 		t.Errorf("buffered attempt must not complete as a clean stream, body:\n%s", body)
 	}
 }
+
+func TestResponseHasAnswerContent(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"invalid json counts as content", `not-json{`, true},
+		{"empty content array", `{"id":"m","type":"message","role":"assistant","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"thinking only", `{"id":"m","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"deep thoughts"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"whitespace text", `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"  "}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"real text", `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"answer"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`, true},
+		{"tool use", `{"id":"m","type":"message","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := responseHasAnswerContent([]byte(tc.body)); got != tc.want {
+				t.Errorf("responseHasAnswerContent() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleNonStreaming_EmptyAnswer_FallsBackToNextModel(t *testing.T) {
+	var callCount int32
+	bodies := []string{
+		`{"id":"msg_1","type":"message","role":"assistant","model":"m1","content":[{"type":"thinking","thinking":"EMPTY_ANSWER_ATTEMPT"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":0}}`,
+		`{"id":"msg_2","type":"message","role":"assistant","model":"m2","content":[{"type":"text","text":"REAL_NONSTREAM_ANSWER"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}`,
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(bodies[min(int(count), len(bodies))-1]))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:          upstream.URL,
+			AnthropicBaseURL: upstream.URL,
+			TimeoutMs:        300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		fallbackHandler:     router.NewFallbackHandler(slog.Default(), 3, 30*time.Second),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"qwen3.7-max","stream":false,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{
+		{Provider: "opencode-go", ModelID: "qwen3.7-max"},
+		{Provider: "opencode-go", ModelID: "minimax-m3"},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleNonStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{}, chain, rawBody, router.ScenarioDefault, "")
+
+	if got := atomic.LoadInt32(&callCount); got != 2 {
+		t.Errorf("expected 2 upstream calls (empty + fallback), got %d", got)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "REAL_NONSTREAM_ANSWER") {
+		t.Errorf("fallback body missing from response:\n%s", body)
+	}
+	if strings.Contains(body, "EMPTY_ANSWER_ATTEMPT") {
+		t.Errorf("failed attempt leaked into response:\n%s", body)
+	}
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", recorder.Code)
+	}
+}
