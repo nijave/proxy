@@ -60,6 +60,9 @@ type responseWriter struct {
 	wroteHeader       bool
 	ssePayloadWritten bool
 	contentWritten    bool
+	holdbackArmed     bool
+	holdbackBuf       []byte
+	holdbackLimit     int
 	usage             struct {
 		inputTokens              int
 		outputTokens             int
@@ -77,19 +80,80 @@ func (w *responseWriter) WriteHeader(code int) {
 	}
 }
 
+// ArmHoldback puts the writer in hold-back mode: SSE payloads are buffered
+// until answer content is detected or the byte limit is reached. Used before
+// each upstream attempt so a thinking-only stream can be discarded and retried
+// on another model without the client ever seeing it. limitBytes <= 0 selects
+// defaultHoldbackLimitBytes.
+func (w *responseWriter) ArmHoldback(limitBytes int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if limitBytes <= 0 {
+		limitBytes = defaultHoldbackLimitBytes
+	}
+	w.holdbackArmed = true
+	w.holdbackBuf = nil
+	w.holdbackLimit = limitBytes
+}
+
+// DiscardHoldback drops any buffered bytes and disarms hold-back mode. Called
+// when an attempt failed before releasing its buffer, so the next model starts
+// with a clean stream.
+func (w *responseWriter) DiscardHoldback() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.holdbackArmed = false
+	w.holdbackBuf = nil
+}
+
+// Write intercepts every outbound byte. While hold-back is armed and no
+// answer content has been seen, bytes accumulate in holdbackBuf instead of
+// reaching the client. Usage extraction and content detection run on every
+// byte regardless of hold state.
 func (w *responseWriter) Write(b []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if len(b) > 0 {
+		w.extractUsageFromSSE(b)
+		w.detectContentInSSE(b)
+		if w.holdbackArmed {
+			w.holdbackBuf = append(w.holdbackBuf, b...)
+			if w.contentWritten || len(w.holdbackBuf) >= w.holdbackLimit {
+				return w.flushHoldbackLocked()
+			}
+			return len(b), nil
+		}
+		if !w.wroteHeader {
+			w.wroteHeader = true
+			w.ResponseWriter.WriteHeader(http.StatusOK)
+		}
+		n, err := w.ResponseWriter.Write(b)
+		if n > 0 {
+			w.ssePayloadWritten = true
+		}
+		return n, err
+	}
+	return 0, nil
+}
+
+// flushHoldbackLocked writes the held prefix to the client and disarms
+// hold-back. Callers must hold w.mu.
+func (w *responseWriter) flushHoldbackLocked() (int, error) {
+	buf := w.holdbackBuf
+	w.holdbackBuf = nil
+	w.holdbackArmed = false
 	if !w.wroteHeader {
 		w.wroteHeader = true
 		w.ResponseWriter.WriteHeader(http.StatusOK)
 	}
-	if len(b) > 0 {
+	n, err := w.ResponseWriter.Write(buf)
+	if n > 0 {
 		w.ssePayloadWritten = true
-		w.extractUsageFromSSE(b)
-		w.detectContentInSSE(b)
 	}
-	return w.ResponseWriter.Write(b)
+	if err == nil && n < len(buf) {
+		return n, io.ErrShortWrite
+	}
+	return n, err
 }
 
 // extractUsageFromSSE parses SSE data and extracts usage information from message_delta events.
@@ -232,6 +296,11 @@ const (
 	defaultKeepaliveInterval = 3 * time.Second
 	keepaliveWriteTimeout    = 5 * time.Second
 )
+
+// defaultHoldbackLimitBytes caps how many SSE bytes may be withheld while
+// waiting for the first answer token. Streams exceeding the cap are released
+// progressively and lose the ability to fall back silently (same as today).
+const defaultHoldbackLimitBytes = 32 * 1024
 
 // WriteKeepalive writes a keepalive comment frame (":keepalive\n\n") to the
 // response. Unlike Write, it does NOT set ssePayloadWritten — keepalives are

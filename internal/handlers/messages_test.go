@@ -2018,3 +2018,114 @@ func TestHandleStreaming_DefaultScenario_ThinkingOnly_AbortsWithError(t *testing
 		}
 	}
 }
+
+func TestResponseWriter_Holdback_BuffersUntilAnswerMarker(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(0) // 0 -> default limit
+
+	mustWrite := func(t *testing.T, rw *responseWriter, frame string) {
+		t.Helper()
+		if _, err := rw.Write([]byte(frame)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+
+	mustWrite(t, rw, "event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
+	if rec.Body.Len() != 0 {
+		t.Fatalf("bytes leaked to client while holding: %q", rec.Body.String())
+	}
+	if rw.ssePayloadWritten {
+		t.Error("ssePayloadWritten must stay false while holding")
+	}
+
+	mustWrite(t, rw, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n")
+	if rec.Body.Len() != 0 {
+		t.Fatalf("thinking frame leaked to client while holding: %q", rec.Body.String())
+	}
+
+	mustWrite(t, rw, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+
+	body := rec.Body.String()
+	for _, want := range []string{"message_start", "thinking_delta", "text_delta"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("flushed stream missing %q; body:\n%s", want, body)
+		}
+	}
+	start := strings.Index(body, "message_start")
+	thinking := strings.Index(body, "thinking_delta")
+	text := strings.Index(body, "text_delta")
+	if !(start < thinking && thinking < text) {
+		t.Errorf("flushed frames out of order:\n%s", body)
+	}
+	if !rw.hasContent() {
+		t.Error("hasContent() = false after answer marker")
+	}
+	if !rw.ssePayloadWritten {
+		t.Error("ssePayloadWritten = false after release")
+	}
+}
+
+func TestResponseWriter_Holdback_LimitReleasesWithoutContent(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(8)
+
+	big := strings.Repeat("x", 100) // no answer markers
+	if _, err := rw.Write([]byte(big)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if rec.Body.Len() != 100 {
+		t.Errorf("expected buffer flush at limit, client got %d bytes", rec.Body.Len())
+	}
+	if rw.ssePayloadWritten != true {
+		t.Error("ssePayloadWritten must be true after limit release")
+	}
+	if rw.hasContent() {
+		t.Error("limit release must not fabricate content")
+	}
+	// Disarmed by release: subsequent writes pass straight through.
+	if _, err := rw.Write([]byte("second")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.HasSuffix(rec.Body.String(), "second") {
+		t.Errorf("post-release write not passed through: %q", rec.Body.String())
+	}
+}
+
+func TestResponseWriter_Holdback_DiscardDropsBuffer(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(0)
+	if _, err := rw.Write([]byte("event: message_start\ndata: {}\n\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	rw.DiscardHoldback()
+	if rec.Body.Len() != 0 {
+		t.Fatalf("discarded bytes reached client: %q", rec.Body.String())
+	}
+	// Disarmed by discard: next write passes through untouched.
+	if _, err := rw.Write([]byte("fresh")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := rec.Body.String(); got != "fresh" {
+		t.Errorf("post-discard write = %q, want %q", got, "fresh")
+	}
+}
+
+func TestResponseWriter_UnarmedPassthroughUnchanged(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	if _, err := rw.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := rec.Body.String(); got != "hello" {
+		t.Errorf("body = %q, want %q", got, "hello")
+	}
+	if !rw.ssePayloadWritten {
+		t.Error("unarmed write must set ssePayloadWritten")
+	}
+	if !rw.wroteHeader {
+		t.Error("first write must write header")
+	}
+}
