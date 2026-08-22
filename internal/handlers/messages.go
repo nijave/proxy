@@ -208,24 +208,6 @@ func parseIntAfter(s string, start int) (int, error) {
 	return sign * val, nil
 }
 
-// isLowValueResponse decides whether a completed stream should be treated as a
-// failure and trigger fallback. Currently this applies to long_context and
-// complex scenarios when the model produced very little output.
-func isLowValueResponse(scenario router.Scenario, outputTokens int, hasContent bool) bool {
-	if outputTokens >= 64 {
-		return false
-	}
-	if hasContent {
-		return false
-	}
-	switch scenario {
-	case router.ScenarioLongContext, router.ScenarioComplex:
-		return true
-	default:
-		return false
-	}
-}
-
 // headerWritten returns true if headers have been written to the response.
 // Safe for concurrent use.
 func (w *responseWriter) headerWritten() bool {
@@ -778,8 +760,8 @@ func (h *MessagesHandler) handleStreaming(
 					continue
 				}
 
-				if isLowValueResponse(scenario, rw.getOutputTokens(), rw.hasContent()) {
-					h.logger.Warn("upstream returned low-value response, triggering fallback",
+				if !rw.hasContent() {
+					h.logger.Warn("upstream stream ended without answer content, triggering fallback",
 						"model", model.ModelID, "provider", model.Provider,
 						"scenario", scenario, "output_tokens", rw.getOutputTokens())
 					if !handleStreamError(transformer.ErrEmptyStream, model, wireFormat.String()) {

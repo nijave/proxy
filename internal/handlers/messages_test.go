@@ -18,6 +18,7 @@ import (
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
 	"github.com/routatic/proxy/internal/metrics"
+	"github.com/routatic/proxy/internal/provider"
 	"github.com/routatic/proxy/internal/router"
 	"github.com/routatic/proxy/internal/token"
 	"github.com/routatic/proxy/internal/transformer"
@@ -1943,5 +1944,77 @@ func TestDetectContentInSSE_AnswerMarkersOnly(t *testing.T) {
 				t.Errorf("hasContent() = %v, want %v for frame %q", got, tc.want, tc.frame)
 			}
 		})
+	}
+}
+
+func TestHandleStreaming_DefaultScenario_ThinkingOnly_AbortsWithError(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"ONLY REASONING, NO ANSWER\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// Register the real Go provider so handleStreaming takes the provider
+	// registry path that contains the empty-answer guard (the legacy fallback
+	// path has no guard and would silently complete the stream).
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	// Single-model chain: fallback cannot proceed, so the request must end
+	// with a visible SSE error rather than a clean-but-empty turn.
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("expected exactly 1 upstream call, got %d", got)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("expected SSE error event for thinking-only stream under default scenario, body:\n%s", body)
+	}
+	// Until Task 4 adds the hold-back buffer, ProxyStream forwards every frame
+	// as it arrives, so message_stop reaches the client before the guard can
+	// fire. The Task-2 contract is therefore "visible failure, not success":
+	// the error event must trail the otherwise-clean stream.
+	if stop := strings.Index(body, "message_stop"); stop != -1 {
+		errIdx := strings.Index(body, `"type":"error"`)
+		if errIdx == -1 || errIdx < stop {
+			t.Errorf("error event must follow the forwarded stream frames, body:\n%s", body)
+		}
 	}
 }
