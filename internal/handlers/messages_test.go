@@ -465,7 +465,7 @@ func TestHandleStreaming_UsageLimitSkipsRemainingProviderModels(t *testing.T) {
 	})
 	_ = registry.Register(&usageLimitStreamProvider{
 		name: "opencode-zen", calls: &zenCalls,
-		body: "event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n",
+		body: "event: message_start\ndata: {}\n\nevent: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {}\n\n",
 	})
 	h := &MessagesHandler{
 		client:           client.NewOpenCodeClient(atomicCfg, nil),
@@ -884,6 +884,7 @@ func TestHandleMessages_UnknownProvider(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -919,6 +920,7 @@ func TestHandleMessages_StreamingMinimaxM3_UsesAnthropicEndpoint(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "event: message_start\ndata: {}\n\n")
+		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
 		_, _ = fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -967,6 +969,7 @@ func TestHandleMessages_StreamingMinimaxM3_UsesAnthropicEndpoint(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1082,6 +1085,7 @@ func TestHandleNonStreaming_GoAnthropicModel_ReplacesModelInBody(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1200,6 +1204,7 @@ func TestHandleNonStreaming_ZenAnthropicModel_ReplacesModelInBody(t *testing.T) 
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1565,6 +1570,7 @@ func TestHandleNonStreaming_ParentContextCanceled_No502(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1648,6 +1654,7 @@ func TestHandleNonStreaming_ParentDeadlineExceeded_No502(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1833,7 +1840,7 @@ func TestHandleStreaming_AnthropicRaw_NoKeepaliveInjection(t *testing.T) {
 		case <-blockCh:
 		case <-time.After(10 * time.Second):
 		}
-		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\"}\n\n")
+		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -2127,5 +2134,206 @@ func TestResponseWriter_UnarmedPassthroughUnchanged(t *testing.T) {
 	}
 	if !rw.wroteHeader {
 		t.Error("first write must write header")
+	}
+}
+
+func TestHandleStreaming_ThinkingOnlyPrimary_FallsBackSilently(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if count == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"SECRET_THINKING_MODEL_ONE\"}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		}
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"FINAL_ANSWER_FROM_MODEL_TWO\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// Register the real Go provider so handleStreaming takes the provider
+	// registry path that contains the empty-answer guard.
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{
+		{Provider: "opencode-go", ModelID: "kimi-k2.6"},
+		{Provider: "opencode-go", ModelID: "glm-5"},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 2 {
+		t.Errorf("expected 2 upstream calls (empty primary + fallback), got %d", got)
+	}
+	if n := strings.Count(body, "event: message_start"); n != 1 {
+		t.Errorf("client must see exactly one message_start, got %d:\n%s", n, body)
+	}
+	if !strings.Contains(body, "FINAL_ANSWER_FROM_MODEL_TWO") {
+		t.Errorf("fallback answer missing from client stream:\n%s", body)
+	}
+	if strings.Contains(body, "SECRET_THINKING_MODEL_ONE") {
+		t.Errorf("primary model reasoning leaked to client:\n%s", body)
+	}
+	if strings.Contains(body, `"type":"error"`) {
+		t.Errorf("silent fallback must not surface an error event:\n%s", body)
+	}
+}
+
+func TestHandleStreaming_EmptyResponseFallbackDisabled_KeepsOldBehavior(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"VISIBLE_THINKING\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{Enabled: boolPtr(false)},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("disabled feature must not retry, calls = %d", got)
+	}
+	if !strings.Contains(body, "VISIBLE_THINKING") {
+		t.Errorf("disabled feature must stream thinking straight through:\n%s", body)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("disabled feature keeps Task-2 behavior: visible error event expected:\n%s", body)
+	}
+}
+
+func TestHandleStreaming_LegacyPath_ThinkingOnly_AbortsWithError(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"LEGACY_THINKING_ONLY\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// No providerRegistry/streamProxy: the attempt takes the legacy
+	// OpenAI-compat path. Hold-back is enabled (nil config defaults on).
+	handler := &MessagesHandler{
+		client:              ocClient,
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	// Single-model chain: nothing to fall back to, so the buffered thinking-
+	// only attempt is discarded and a visible SSE error ends the request.
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("expected exactly 1 upstream call, got %d", got)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("legacy path must end with a visible SSE error for a thinking-only stream, body:\n%s", body)
+	}
+	if strings.Contains(body, "LEGACY_THINKING_ONLY") {
+		t.Errorf("discarded attempt reasoning leaked to client:\n%s", body)
+	}
+	if strings.Contains(body, "message_stop") {
+		t.Errorf("buffered attempt must not complete as a clean stream, body:\n%s", body)
 	}
 }

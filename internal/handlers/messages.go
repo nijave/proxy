@@ -46,8 +46,9 @@ type MessagesHandler struct {
 	requestIDGen        *middleware.RequestIDGenerator
 	metrics             *metrics.Metrics
 	captureLogger       *debug.CaptureLogger
-	history             *history.History // optional: nil means no GUI history
-	storage             StorageWriter    // optional: SQLite persistence for requests/latency
+	history             *history.History                    // optional: nil means no GUI history
+	storage             StorageWriter                       // optional: SQLite persistence for requests/latency
+	emptyRespFallback   *config.EmptyResponseFallbackConfig // optional: nil means enabled-by-default via accessor
 }
 
 // responseWriter wraps http.ResponseWriter to track if headers were written.
@@ -384,6 +385,7 @@ func NewMessagesHandler(
 	captureLogger *debug.CaptureLogger,
 	hist *history.History,
 	storage StorageWriter,
+	emptyRespFallback *config.EmptyResponseFallbackConfig,
 ) *MessagesHandler {
 	return &MessagesHandler{
 		client:              openCodeClient,
@@ -403,6 +405,7 @@ func NewMessagesHandler(
 		captureLogger:       captureLogger,
 		history:             hist,
 		storage:             storage,
+		emptyRespFallback:   emptyRespFallback,
 	}
 }
 
@@ -694,6 +697,10 @@ func (h *MessagesHandler) handleStreaming(
 			continue
 		}
 
+		if h.emptyRespFallback.IsEnabled() {
+			rw.ArmHoldback(h.emptyRespFallback.LimitBytes())
+		}
+
 		h.logger.Info("attempting streaming model", "model", model.ModelID, "provider", model.Provider)
 
 		// Upstream context carries the streaming timeout configured for the model.
@@ -759,6 +766,7 @@ func (h *MessagesHandler) handleStreaming(
 					h.metrics.RecordFailureForModel(model.ModelID)
 					return false // abort
 				}
+				rw.DiscardHoldback()
 				return true // continue to next model
 			}
 			if err == transformer.ErrEmptyStream {
@@ -769,6 +777,7 @@ func (h *MessagesHandler) handleStreaming(
 					h.metrics.RecordFailureForModel(model.ModelID)
 					return false // abort
 				}
+				rw.DiscardHoldback()
 				return true // continue to next model
 			}
 			h.logger.Warn(action+" streaming failed", "model", model.ModelID, "error", err)
@@ -777,7 +786,23 @@ func (h *MessagesHandler) handleStreaming(
 				h.metrics.RecordFailureForModel(model.ModelID)
 				return false // abort — cannot fallback after SSE payload started
 			}
+			rw.DiscardHoldback()
 			return true // continue to next model
+		}
+
+		// emptyAnswerFallback reports whether the completed attempt produced no
+		// answer content and fallback should proceed to the next model.
+		emptyAnswerFallback := func(model config.ModelConfig, wireName string) bool {
+			if rw.hasContent() {
+				return false
+			}
+			h.logger.Warn("upstream stream ended without answer content, triggering fallback",
+				"model", model.ModelID, "provider", model.Provider,
+				"scenario", scenario, "output_tokens", rw.getOutputTokens())
+			if !handleStreamError(transformer.ErrEmptyStream, model, wireName) {
+				return false // abort
+			}
+			return true // continue
 		}
 
 		// Try new provider-based dispatch first.
@@ -829,18 +854,14 @@ func (h *MessagesHandler) handleStreaming(
 					continue
 				}
 
-				if !rw.hasContent() {
-					h.logger.Warn("upstream stream ended without answer content, triggering fallback",
-						"model", model.ModelID, "provider", model.Provider,
-						"scenario", scenario, "output_tokens", rw.getOutputTokens())
-					if !handleStreamError(transformer.ErrEmptyStream, model, wireFormat.String()) {
-						return
-					}
-					continue
+				if rw.hasContent() {
+					recordStreamSuccess(model)
+					return
 				}
-
-				recordStreamSuccess(model)
-				return
+				if !emptyAnswerFallback(model, wireFormat.String()) {
+					return // aborted; error event already sent
+				}
+				continue
 			}
 		}
 
@@ -864,8 +885,14 @@ func (h *MessagesHandler) handleStreaming(
 						}
 						continue
 					}
-					recordStreamSuccess(model)
-					return
+					if rw.hasContent() {
+						recordStreamSuccess(model)
+						return
+					}
+					if !emptyAnswerFallback(model, "anthropic") {
+						return // aborted; error event already sent
+					}
+					continue
 				}
 
 			case client.EndpointResponses:
@@ -882,8 +909,14 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				recordStreamSuccess(model)
-				return
+				if rw.hasContent() {
+					recordStreamSuccess(model)
+					return
+				}
+				if !emptyAnswerFallback(model, "responses") {
+					return // aborted; error event already sent
+				}
+				continue
 
 			case client.EndpointGemini:
 				if err := h.handleGeminiStreaming(attemptCtx, rw, anthropicReq, model, clientCtx, idleTimeout, cancelAttempt); err != nil {
@@ -899,8 +932,14 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				recordStreamSuccess(model)
-				return
+				if rw.hasContent() {
+					recordStreamSuccess(model)
+					return
+				}
+				if !emptyAnswerFallback(model, "gemini") {
+					return // aborted; error event already sent
+				}
+				continue
 
 			default:
 				// Fall through to OpenAI-compatible handling
@@ -917,8 +956,14 @@ func (h *MessagesHandler) handleStreaming(
 				}
 				continue
 			}
-			recordStreamSuccess(model)
-			return
+			if rw.hasContent() {
+				recordStreamSuccess(model)
+				return
+			}
+			if !emptyAnswerFallback(model, "anthropic") {
+				return // aborted; error event already sent
+			}
+			continue
 		}
 
 		// OpenAI-compatible models (both Go and Zen)
@@ -957,11 +1002,18 @@ func (h *MessagesHandler) handleStreaming(
 			continue
 		}
 
-		recordStreamSuccess(model)
-		return
+		if rw.hasContent() {
+			recordStreamSuccess(model)
+			return
+		}
+		if !emptyAnswerFallback(model, "openai") {
+			return // aborted; error event already sent
+		}
+		continue
 	}
 
 	h.metrics.RecordFailure()
+	rw.DiscardHoldback()
 	if rw.ssePayloadWritten {
 		// SSE payload was already sent — do not attempt further writes
 		// beyond the error event.  The client has a partial stream.

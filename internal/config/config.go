@@ -9,29 +9,30 @@ import "encoding/json"
 // supports environment variable interpolation via ${VAR} syntax and hot-reloading
 // when hot_reload is enabled.
 type Config struct {
-	APIKey                         string                   `json:"api_key"`
-	APIKeys                        []string                 `json:"api_keys"`
-	Host                           string                   `json:"host"`
-	Port                           int                      `json:"port"`
-	HotReload                      bool                     `json:"hot_reload"`
-	EnableStreamingScenarioRouting bool                     `json:"enable_streaming_scenario_routing"`
-	EnableCostBasedRouting         bool                     `json:"enable_cost_based_routing"`
-	CostRouting                    *CostRoutingConfig       `json:"cost_routing,omitempty"`
-	RespectRequestedModel          *bool                    `json:"respect_requested_model,omitempty"`
-	Models                         map[string]ModelConfig   `json:"models"`
-	Fallbacks                      map[string][]ModelConfig `json:"fallbacks"`
-	ModelOverrides                 map[string]ModelConfig   `json:"model_overrides"`
-	ModelFamilyOverrides           map[string]ModelConfig   `json:"model_family_overrides"`
-	AWSBedrock                     AWSBedrockConfig         `json:"aws_bedrock"`
-	OpenCodeGo                     OpenCodeGoConfig         `json:"opencode_go"`
-	OpenCodeZen                    OpenCodeZenConfig        `json:"opencode_zen"`
-	OpenRouter                     OpenRouterConfig         `json:"openrouter"`
-	AnthropicFirst                 AnthropicFirstConfig     `json:"anthropic_first"`
-	Logging                        LoggingConfig            `json:"logging"`
-	Debug                          DebugConfig              `json:"debug"`
-	Catalog                        CatalogConfig            `json:"catalog"`
-	Storage                        *StorageConfig           `json:"storage,omitempty"`
-	UpdateChannel                  string                   `json:"update_channel,omitempty"`
+	APIKey                         string                       `json:"api_key"`
+	APIKeys                        []string                     `json:"api_keys"`
+	Host                           string                       `json:"host"`
+	Port                           int                          `json:"port"`
+	HotReload                      bool                         `json:"hot_reload"`
+	EnableStreamingScenarioRouting bool                         `json:"enable_streaming_scenario_routing"`
+	EnableCostBasedRouting         bool                         `json:"enable_cost_based_routing"`
+	CostRouting                    *CostRoutingConfig           `json:"cost_routing,omitempty"`
+	RespectRequestedModel          *bool                        `json:"respect_requested_model,omitempty"`
+	Models                         map[string]ModelConfig       `json:"models"`
+	Fallbacks                      map[string][]ModelConfig     `json:"fallbacks"`
+	ModelOverrides                 map[string]ModelConfig       `json:"model_overrides"`
+	ModelFamilyOverrides           map[string]ModelConfig       `json:"model_family_overrides"`
+	AWSBedrock                     AWSBedrockConfig             `json:"aws_bedrock"`
+	OpenCodeGo                     OpenCodeGoConfig             `json:"opencode_go"`
+	OpenCodeZen                    OpenCodeZenConfig            `json:"opencode_zen"`
+	OpenRouter                     OpenRouterConfig             `json:"openrouter"`
+	AnthropicFirst                 AnthropicFirstConfig         `json:"anthropic_first"`
+	Logging                        LoggingConfig                `json:"logging"`
+	Debug                          DebugConfig                  `json:"debug"`
+	Catalog                        CatalogConfig                `json:"catalog"`
+	Storage                        *StorageConfig               `json:"storage,omitempty"`
+	EmptyResponseFallback          *EmptyResponseFallbackConfig `json:"empty_response_fallback,omitempty"`
+	UpdateChannel                  string                       `json:"update_channel,omitempty"`
 }
 
 // CostRoutingConfig controls cost-aware model selection.
@@ -56,6 +57,34 @@ func (c *Config) CostBasedRoutingEnabled() bool {
 		return true
 	}
 	return false
+}
+
+// EmptyResponseFallbackConfig controls treating reasoning-only responses
+// (streams that end with no text or tool_use content) as failures and
+// falling back to the next model in the chain. Enabled by default; opt out
+// with {"enabled": false}.
+type EmptyResponseFallbackConfig struct {
+	Enabled            *bool `json:"enabled,omitempty"`
+	HoldbackLimitBytes int   `json:"holdback_limit_bytes,omitempty"`
+}
+
+// IsEnabled reports whether empty-response fallback should act. A nil config
+// or unset flag means enabled.
+func (c *EmptyResponseFallbackConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// LimitBytes returns the hold-back buffer cap. Values <= 0 select the
+// 32 KiB default.
+func (c *EmptyResponseFallbackConfig) LimitBytes() int {
+	const def = 32 * 1024
+	if c == nil || c.HoldbackLimitBytes <= 0 {
+		return def
+	}
+	return c.HoldbackLimitBytes
 }
 
 // AnthropicFirstConfig controls direct Anthropic passthrough with OpenCode fallback.
