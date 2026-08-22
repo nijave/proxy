@@ -146,14 +146,17 @@ func (w *responseWriter) extractUsageFromSSE(b []byte) {
 	}
 }
 
+// detectContentInSSE scans an outgoing SSE payload for user-visible answer
+// content: text deltas, tool-use blocks, or incremental tool arguments.
+// Thinking deltas deliberately do NOT count — a stream that produced reasoning
+// but no answer must be classifiable as empty so it can trigger model fallback.
+// Markers are matched against compact JSON ("type":"tool_use" with no space)
+// which is what encoding/json and our upstreams emit.
 func (w *responseWriter) detectContentInSSE(b []byte) {
 	data := string(b)
-	if strings.Contains(data, `"content_block_start"`) ||
-		strings.Contains(data, `"content_block_delta"`) ||
-		strings.Contains(data, `"text_delta"`) ||
-		strings.Contains(data, `"content":"`) ||
-		strings.Contains(data, `"tool_use"`) ||
-		strings.Contains(data, `"thinking_delta"`) {
+	if strings.Contains(data, `"text_delta"`) ||
+		strings.Contains(data, `"input_json_delta"`) ||
+		strings.Contains(data, `"type":"tool_use"`) {
 		w.contentWritten = true
 	}
 }

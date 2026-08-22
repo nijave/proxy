@@ -1890,3 +1890,58 @@ func TestHandleStreaming_AnthropicRaw_NoKeepaliveInjection(t *testing.T) {
 		t.Errorf("keepalive comment leaked into Anthropic raw stream output (concurrent write bug):\n%s", body)
 	}
 }
+
+func TestDetectContentInSSE_AnswerMarkersOnly(t *testing.T) {
+	cases := []struct {
+		name  string
+		frame string
+		want  bool
+	}{
+		{
+			name:  "message start is not content",
+			frame: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"content\":[]}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "thinking block start is not content",
+			frame: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "thinking delta is not content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reasoning\"}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "tool_use stop reason is not content",
+			frame: "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":10}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "text delta is content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+			want:  true,
+		},
+		{
+			name:  "tool_use block start is content",
+			frame: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+			want:  true,
+		},
+		{
+			name:  "input_json_delta is content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\":\"}}\n\n",
+			want:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rw := &responseWriter{ResponseWriter: httptest.NewRecorder()}
+			if _, err := rw.Write([]byte(tc.frame)); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if got := rw.hasContent(); got != tc.want {
+				t.Errorf("hasContent() = %v, want %v for frame %q", got, tc.want, tc.frame)
+			}
+		})
+	}
+}
