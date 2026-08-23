@@ -18,30 +18,41 @@ func ParseModelRef(ref string) (Selector, error) {
 		return Selector{}, errors.New("model reference is empty")
 	}
 
-	parts := strings.Split(ref, "@")
-	if len(parts) > 2 {
-		return Selector{}, fmt.Errorf("model reference %q contains multiple @ separators", ref)
+	last := strings.LastIndex(ref, "@")
+	if last < 0 {
+		// No provider qualifier: keep legacy behavior — bare "lab/model"
+		// refs select on the trailing segment.
+		if idx := strings.LastIndex(ref, "/"); idx >= 0 {
+			return Selector{Model: ref[idx+1:], Alias: ref}, nil
+		}
+		return Selector{Model: ref, Alias: ref}, nil
 	}
 
-	modelPart := parts[0]
-	if modelPart == "" {
-		return Selector{}, fmt.Errorf("model id is empty in reference %q", ref)
-	}
-
-	var provider string
-	if len(parts) == 2 {
-		provider = parts[1]
-	}
-
-	if idx := strings.LastIndex(modelPart, "/"); idx >= 0 {
-		model := modelPart[idx+1:]
-		if model == "" {
+	switch atCount := strings.Count(ref, "@"); {
+	case atCount == 1 && last == 0:
+		// Leading '@' with no provider suffix: a Workers AI-style model id
+		// ("@cf/org/model"). Require a slash so the legacy "@provider"
+		// shape (missing model) stays an error.
+		if !strings.Contains(ref[1:], "/") {
 			return Selector{}, fmt.Errorf("model id is empty in reference %q", ref)
 		}
-		return Selector{Provider: provider, Model: model, Alias: modelPart}, nil
+		return Selector{Model: ref, Alias: ref}, nil
+	case atCount == 1:
+		modelPart := ref[:last]
+		if modelPart == "" {
+			return Selector{}, fmt.Errorf("model id is empty in reference %q", ref)
+		}
+		return Selector{Provider: ref[last+1:], Model: modelPart, Alias: modelPart}, nil
+	case atCount == 2 && ref[0] == '@':
+		// Workers AI id plus provider: "@cf/org/model@provider".
+		modelPart := ref[:last]
+		if len(modelPart) < 2 || !strings.Contains(modelPart[1:], "/") {
+			return Selector{}, fmt.Errorf("model reference %q is not a valid model@provider pair", ref)
+		}
+		return Selector{Provider: ref[last+1:], Model: modelPart, Alias: modelPart}, nil
+	default:
+		return Selector{}, fmt.Errorf("model reference %q contains multiple @ separators", ref)
 	}
-
-	return Selector{Provider: provider, Model: modelPart, Alias: modelPart}, nil
 }
 
 // Resolve resolves a canonical selector into a fully materialized model/provider pair.
@@ -174,6 +185,14 @@ func (ic *IndexedCatalog) ListProviderModels(provider string) []ResolvedModel {
 }
 
 func (ic *IndexedCatalog) findModel(sel Selector) (Model, string) {
+	// Probe the fully-composited key first so verbatim slashed IDs
+	// ("@cf/meta/..." with an explicit provider) hit their exact entry.
+	if sel.Provider != "" {
+		composite := sel.Provider + "/" + sel.Model
+		if model, ok := ic.Models[composite]; ok {
+			return model, composite
+		}
+	}
 	if model, ok := ic.Models[sel.Model]; ok {
 		return model, sel.Model
 	}
@@ -187,7 +206,7 @@ func (ic *IndexedCatalog) findModel(sel Selector) (Model, string) {
 	// If sel.Provider is set, prefer matching that provider.
 	var fallbackKeys []string
 	for key, model := range ic.Models {
-		if modelNameFromKey(key) == sel.Model {
+		if modelMatchesSelector(key, sel) {
 			if sel.Provider != "" && ProviderFromModelKey(key) == sel.Provider {
 				return model, key
 			}
@@ -202,6 +221,21 @@ func (ic *IndexedCatalog) findModel(sel Selector) (Model, string) {
 		return ic.Models[key], key
 	}
 	return Model{}, ""
+}
+
+// modelMatchesSelector reports whether a catalog key's model-name segment
+// matches the selector. Besides the exact match, it accepts selectors whose
+// Model carries a trailing "/segment" (legacy "lab/model@provider" refs),
+// comparing only the final segment against the key's model name.
+func modelMatchesSelector(key string, sel Selector) bool {
+	name := modelNameFromKey(key)
+	if name == sel.Model {
+		return true
+	}
+	if idx := strings.LastIndex(sel.Model, "/"); idx >= 0 {
+		return sel.Model[idx+1:] == name
+	}
+	return false
 }
 
 func (ic *IndexedCatalog) resolveWithFirstEnabledProvider(model Model, key string) (ResolvedModel, error) {

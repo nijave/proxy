@@ -362,3 +362,73 @@ func TestListProviderModels(t *testing.T) {
 		}
 	}
 }
+
+func TestResolve_SlashedModelIDs(t *testing.T) {
+	newCat := func() *IndexedCatalog {
+		return &IndexedCatalog{
+			Catalog: Catalog{
+				Providers: map[string]Provider{
+					"cloudflare": {
+						Name:    "cloudflare",
+						BaseURL: "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions",
+						Enabled: boolPtr(true),
+					},
+					"opencode-go": {
+						Name:    "opencode-go",
+						BaseURL: "https://example.test/v1",
+						Enabled: boolPtr(true),
+					},
+				},
+				Models: map[string]Model{
+					"cloudflare/@cf/meta/llama-3.1-8b-instruct": {
+						ID:   "cloudflare/@cf/meta/llama-3.1-8b-instruct",
+						Name: "Llama 3.1 8B",
+					},
+					"opencode-go/deepseek-v4-flash": {
+						ID:       "opencode-go/deepseek-v4-flash",
+						Name:     "DeepSeek V4 Flash",
+						ToolCall: true,
+						Limit:    &Limit{Context: 128000},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		ref         string
+		wantCanon   string
+		wantModelID string
+	}{
+		{
+			name:        "workers ai ref resolves by composite key",
+			ref:         "@cf/meta/llama-3.1-8b-instruct@cloudflare",
+			wantCanon:   "cloudflare/@cf/meta/llama-3.1-8b-instruct",
+			wantModelID: "@cf/meta/llama-3.1-8b-instruct",
+		},
+		{
+			name:        "legacy lab/model@provider still resolves",
+			ref:         "deepseek/deepseek-v4-flash@opencode-go",
+			wantCanon:   "opencode-go/deepseek-v4-flash",
+			wantModelID: "deepseek-v4-flash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sel, err := ParseModelRef(tt.ref)
+			if err != nil {
+				t.Fatalf("ParseModelRef(%q) error = %v", tt.ref, err)
+			}
+			got, err := newCat().Resolve(sel)
+			if err != nil {
+				t.Fatalf("Resolve(%+v) error = %v", sel, err)
+			}
+			if got.CanonicalName != tt.wantCanon || got.ModelID != tt.wantModelID {
+				t.Errorf("Resolve(%q) = canon=%q modelID=%q, want canon=%q modelID=%q",
+					tt.ref, got.CanonicalName, got.ModelID, tt.wantCanon, tt.wantModelID)
+			}
+		})
+	}
+}
