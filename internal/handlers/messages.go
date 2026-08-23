@@ -870,6 +870,22 @@ func (h *MessagesHandler) handleStreaming(
 			return true // continue
 		}
 
+		// attemptComplete finishes the current attempt: records success when
+		// answer content arrived, otherwise routes to fallback handling.
+		// Returns true when the overall request is finished — either success
+		// was recorded or an abort error event was already sent — so the
+		// caller must stop; false means try the next model.
+		attemptComplete := func(wireName string) bool {
+			if rw.hasContent() {
+				recordStreamSuccess(model)
+				return true
+			}
+			if !emptyAnswerFallback(model, wireName) {
+				return true // aborted; error event already sent
+			}
+			return false
+		}
+
 		// Try new provider-based dispatch first.
 		if h.providerRegistry != nil {
 			if prov, ok := h.providerRegistry.Get(client.Provider(model)); ok {
@@ -919,12 +935,8 @@ func (h *MessagesHandler) handleStreaming(
 					continue
 				}
 
-				if rw.hasContent() {
-					recordStreamSuccess(model)
+				if attemptComplete(wireFormat.String()) {
 					return
-				}
-				if !emptyAnswerFallback(model, wireFormat.String()) {
-					return // aborted; error event already sent
 				}
 				continue
 			}
@@ -950,12 +962,8 @@ func (h *MessagesHandler) handleStreaming(
 						}
 						continue
 					}
-					if rw.hasContent() {
-						recordStreamSuccess(model)
+					if attemptComplete("anthropic") {
 						return
-					}
-					if !emptyAnswerFallback(model, "anthropic") {
-						return // aborted; error event already sent
 					}
 					continue
 				}
@@ -974,12 +982,8 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				if rw.hasContent() {
-					recordStreamSuccess(model)
+				if attemptComplete("responses") {
 					return
-				}
-				if !emptyAnswerFallback(model, "responses") {
-					return // aborted; error event already sent
 				}
 				continue
 
@@ -997,12 +1001,8 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				if rw.hasContent() {
-					recordStreamSuccess(model)
+				if attemptComplete("gemini") {
 					return
-				}
-				if !emptyAnswerFallback(model, "gemini") {
-					return // aborted; error event already sent
 				}
 				continue
 
@@ -1021,12 +1021,8 @@ func (h *MessagesHandler) handleStreaming(
 				}
 				continue
 			}
-			if rw.hasContent() {
-				recordStreamSuccess(model)
+			if attemptComplete("anthropic") {
 				return
-			}
-			if !emptyAnswerFallback(model, "anthropic") {
-				return // aborted; error event already sent
 			}
 			continue
 		}
@@ -1067,12 +1063,8 @@ func (h *MessagesHandler) handleStreaming(
 			continue
 		}
 
-		if rw.hasContent() {
-			recordStreamSuccess(model)
+		if attemptComplete("openai") {
 			return
-		}
-		if !emptyAnswerFallback(model, "openai") {
-			return // aborted; error event already sent
 		}
 		continue
 	}
