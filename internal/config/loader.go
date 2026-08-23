@@ -203,6 +203,21 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.OpenRouter.APIKey = ""
 	}
 
+	if v := envValue("ROUTATIC_PROXY_CLOUDFLARE_API_KEY"); v != "" {
+		cfg.Cloudflare.APIKey = v
+		cfg.Cloudflare.APIKeys = nil
+	}
+	if v := envValue("ROUTATIC_PROXY_CLOUDFLARE_API_KEYS"); v != "" {
+		cfg.Cloudflare.APIKeys = parseCommaSeparatedKeys(v)
+		cfg.Cloudflare.APIKey = ""
+	}
+	if v := envValue("ROUTATIC_PROXY_CLOUDFLARE_ACCOUNT_ID"); v != "" {
+		cfg.Cloudflare.AccountID = v
+	}
+	if v := envValue("ROUTATIC_PROXY_CLOUDFLARE_BASE_URL"); v != "" {
+		cfg.Cloudflare.BaseURL = v
+	}
+
 	if v := envValue("ROUTATIC_PROXY_HOST"); v != "" {
 		cfg.Host = v
 	}
@@ -356,6 +371,16 @@ func validate(cfg *Config) error {
 	}
 	if err := validateAPIKeys(cfg.OpenRouter.APIKeys); err != nil {
 		return fmt.Errorf("openrouter.api_keys: %w", err)
+	}
+
+	if err := validateSingleAPIKey(cfg.Cloudflare.APIKey); err != nil {
+		return fmt.Errorf("cloudflare.api_key: %w", err)
+	}
+	if err := validateAPIKeys(cfg.Cloudflare.APIKeys); err != nil {
+		return fmt.Errorf("cloudflare.api_keys: %w", err)
+	}
+	if len(cfg.Cloudflare.EffectiveAPIKeys()) > 0 && cfg.Cloudflare.AccountID == "" && cfg.Cloudflare.BaseURL == "" {
+		return fmt.Errorf("cloudflare.account_id is required when cloudflare API keys are configured (or set cloudflare.base_url directly)")
 	}
 
 	if err := validateModelOverrides(cfg.ModelOverrides); err != nil {

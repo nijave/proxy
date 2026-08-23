@@ -1,7 +1,10 @@
 // Package config handles application configuration loading and validation.
 package config
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Config is the root configuration loaded from ~/.config/routatic-proxy/config.json.
 // It defines the server settings (host, port), provider connections (OpenCode Go,
@@ -26,6 +29,7 @@ type Config struct {
 	OpenCodeGo                     OpenCodeGoConfig             `json:"opencode_go"`
 	OpenCodeZen                    OpenCodeZenConfig            `json:"opencode_zen"`
 	OpenRouter                     OpenRouterConfig             `json:"openrouter"`
+	Cloudflare                     CloudflareConfig             `json:"cloudflare"`
 	AnthropicFirst                 AnthropicFirstConfig         `json:"anthropic_first"`
 	Logging                        LoggingConfig                `json:"logging"`
 	Debug                          DebugConfig                  `json:"debug"`
@@ -207,6 +211,49 @@ func (c *OpenRouterConfig) EffectiveAPIKeys() []string {
 		return []string{c.APIKey}
 	}
 	return nil
+}
+
+// CloudflareConfig holds the upstream Cloudflare Workers AI settings. Requests
+// go to the OpenAI-compatible chat completions endpoint built from AccountID,
+// unless BaseURL overrides it. GatewayID optionally adds the cf-aig-gateway-id
+// header to route requests through a Cloudflare AI Gateway (enables Cloudflare-
+// side logging, caching, and rate limiting).
+type CloudflareConfig struct {
+	AccountID          string   `json:"account_id"`
+	BaseURL            string   `json:"base_url,omitempty"`
+	GatewayID          string   `json:"gateway_id,omitempty"`
+	APIKey             string   `json:"api_key,omitempty"`
+	APIKeys            []string `json:"api_keys,omitempty"`
+	TimeoutMs          int      `json:"timeout_ms"`
+	StreamTimeoutMs    int      `json:"stream_timeout_ms"`
+	StreamingTimeoutMs int      `json:"streaming_timeout_ms,omitempty"`
+}
+
+// EffectiveAPIKeys returns the pool of API keys for Cloudflare.
+// APIKeys takes precedence; falls back to the single APIKey field.
+func (c *CloudflareConfig) EffectiveAPIKeys() []string {
+	if len(c.APIKeys) > 0 {
+		return c.APIKeys
+	}
+	if c.APIKey != "" {
+		return []string{c.APIKey}
+	}
+	return nil
+}
+
+const cloudflareChatCompletionsURLFormat = "https://api.cloudflare.com/client/v4/accounts/%s/ai/v1/chat/completions"
+
+// EffectiveBaseURL returns the chat completions endpoint for this account.
+// An explicit BaseURL wins; otherwise the URL is composed from AccountID.
+// Returns "" when neither is configured.
+func (c *CloudflareConfig) EffectiveBaseURL() string {
+	if c.BaseURL != "" {
+		return c.BaseURL
+	}
+	if c.AccountID == "" {
+		return ""
+	}
+	return fmt.Sprintf(cloudflareChatCompletionsURLFormat, c.AccountID)
 }
 
 // OpenCodeZenConfig holds the upstream OpenCode Zen API settings.
