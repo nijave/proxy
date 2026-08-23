@@ -414,6 +414,24 @@ func TestSelectCheapest_Constraints_CombinedVisionAndTools(t *testing.T) {
 	}
 }
 
+func TestEnabledProviders_IncludesCloudflare(t *testing.T) {
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{APIKey: "cf-key"},
+	}
+	got := enabledProviders(cfg)
+	if !got["cloudflare"] {
+		t.Errorf("enabledProviders() missing cloudflare with provider keys configured: %v", got)
+	}
+}
+
+func TestEnabledProviders_CloudflareDisabledWithoutKeys(t *testing.T) {
+	cfg := &config.Config{}
+	got := enabledProviders(cfg)
+	if got["cloudflare"] {
+		t.Errorf("enabledProviders() unexpectedly enables cloudflare with no keys: %v", got)
+	}
+}
+
 // TestSelectCheapest_PenaltyPerProvider verifies that cost_routing.penalty_per_provider
 // inflates a provider's effective cost during selection. When opencode-go is penalised
 // enough, large-context on openrouter (unpenalised, cost 3.0) becomes cheaper than
