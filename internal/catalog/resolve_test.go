@@ -76,11 +76,11 @@ func TestParseModelRef(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "lab/model@provider",
+			name: "lab/model@provider keeps slashed id verbatim",
 			ref:  "deepseek/deepseek-v4-flash@opencode-go",
 			want: Selector{
 				Provider: "opencode-go",
-				Model:    "deepseek-v4-flash",
+				Model:    "deepseek/deepseek-v4-flash",
 				Alias:    "deepseek/deepseek-v4-flash",
 			},
 		},
@@ -109,6 +109,33 @@ func TestParseModelRef(t *testing.T) {
 				Provider: "",
 				Model:    "deepseek-v4-flash",
 				Alias:    "deepseek/deepseek-v4-flash",
+			},
+		},
+		{
+			name: "workers ai slashed id@provider",
+			ref:  "@cf/meta/llama-3.1-8b-instruct@cloudflare",
+			want: Selector{
+				Provider: "cloudflare",
+				Model:    "@cf/meta/llama-3.1-8b-instruct",
+				Alias:    "@cf/meta/llama-3.1-8b-instruct",
+			},
+		},
+		{
+			name: "leading-@ slashed id without provider parses verbatim",
+			ref:  "@cf/meta/llama-3.1-8b-instruct",
+			want: Selector{
+				Provider: "",
+				Model:    "@cf/meta/llama-3.1-8b-instruct",
+				Alias:    "@cf/meta/llama-3.1-8b-instruct",
+			},
+		},
+		{
+			name: "three segment lab/model@provider",
+			ref:  "meta-llama/Llama-3.3-70B-Instruct@openrouter",
+			want: Selector{
+				Provider: "openrouter",
+				Model:    "meta-llama/Llama-3.3-70B-Instruct",
+				Alias:    "meta-llama/Llama-3.3-70B-Instruct",
 			},
 		},
 		{
