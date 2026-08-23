@@ -51,6 +51,14 @@ type MessagesHandler struct {
 	emptyRespFallback   *config.EmptyResponseFallbackConfig // optional: nil means enabled-by-default via accessor
 }
 
+// scanTailMax caps how many trailing bytes of the previous outbound payload
+// are prepended when scanning the next one. Answer markers that straddle a
+// Write boundary are only found if the seam falls inside this window, so it
+// must be larger than the longest marker. The raw Anthropic passthrough paths
+// copy upstream bytes in fixed-size network-aligned chunks, which routinely
+// split SSE frames mid-token.
+const scanTailMax = 64
+
 // responseWriter wraps http.ResponseWriter to track if headers were written.
 // It is safe for concurrent use: Write, WriteHeader, and Flush are serialized
 // via an internal mutex so that concurrent goroutines (e.g. heartbeat and
@@ -64,6 +72,9 @@ type responseWriter struct {
 	holdbackArmed     bool
 	holdbackBuf       []byte
 	holdbackLimit     int
+	scanTail          [scanTailMax]byte // tail of previous payload, for cross-write marker detection
+	scanTailLen       int
+	scanScratch       []byte // reused buffer: scanTail + current payload
 	usage             struct {
 		inputTokens              int
 		outputTokens             int
@@ -215,15 +226,69 @@ func (w *responseWriter) extractUsageFromSSE(b []byte) {
 // content: text deltas, tool-use blocks, or incremental tool arguments.
 // Thinking deltas deliberately do NOT count — a stream that produced reasoning
 // but no answer must be classifiable as empty so it can trigger model fallback.
-// Markers are matched against compact JSON ("type":"tool_use" with no space)
-// which is what encoding/json and our upstreams emit.
+// Each payload is scanned together with the tail of the previous payload, so
+// markers split across Write boundaries are still detected. tool_use block
+// starts are matched with JSON whitespace tolerance ("type": "tool_use"),
+// not just compact JSON.
 func (w *responseWriter) detectContentInSSE(b []byte) {
-	data := string(b)
-	if strings.Contains(data, `"text_delta"`) ||
-		strings.Contains(data, `"input_json_delta"`) ||
-		strings.Contains(data, `"type":"tool_use"`) {
-		w.contentWritten = true
+	w.scanScratch = append(w.scanScratch[:0], w.scanTail[:w.scanTailLen]...)
+	w.scanScratch = append(w.scanScratch, b...)
+	if !w.contentWritten {
+		data := string(w.scanScratch)
+		if strings.Contains(data, `"text_delta"`) ||
+			strings.Contains(data, `"input_json_delta"`) ||
+			containsToolUseBlockStart(data) {
+			w.contentWritten = true
+		}
 	}
+	w.rememberScanTail(w.scanScratch)
+}
+
+// rememberScanTail keeps the last scanTailMax bytes of data so the next Write
+// can detect markers straddling the boundary between the two payloads.
+func (w *responseWriter) rememberScanTail(data []byte) {
+	n := len(data)
+	if n > scanTailMax {
+		n = scanTailMax
+	}
+	w.scanTailLen = copy(w.scanTail[:], data[len(data)-n:])
+}
+
+// containsToolUseBlockStart reports whether s declares a tool_use block: a
+// "type" key whose value is "tool_use", allowing JSON whitespace around the
+// colon. Matching the key/value pair — rather than the byte-exact compact
+// form `"type":"tool_use"` — keeps detection working when an upstream emits
+// pretty-printed JSON.
+func containsToolUseBlockStart(s string) bool {
+	const typeKey = `"type"`
+	for i := 0; i < len(s); {
+		idx := strings.Index(s[i:], typeKey)
+		if idx < 0 {
+			return false
+		}
+		i += idx + len(typeKey)
+		j := skipJSONSpace(s, i)
+		if j >= len(s) || s[j] != ':' {
+			continue
+		}
+		j = skipJSONSpace(s, j+1)
+		if strings.HasPrefix(s[j:], `"tool_use"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func skipJSONSpace(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 func (w *responseWriter) hasContent() bool {
