@@ -46,9 +46,18 @@ type MessagesHandler struct {
 	requestIDGen        *middleware.RequestIDGenerator
 	metrics             *metrics.Metrics
 	captureLogger       *debug.CaptureLogger
-	history             *history.History // optional: nil means no GUI history
-	storage             StorageWriter    // optional: SQLite persistence for requests/latency
+	history             *history.History                    // optional: nil means no GUI history
+	storage             StorageWriter                       // optional: SQLite persistence for requests/latency
+	emptyRespFallback   *config.EmptyResponseFallbackConfig // optional: nil means enabled-by-default via accessor
 }
+
+// scanTailMax caps how many trailing bytes of the previous outbound payload
+// are prepended when scanning the next one. Answer markers that straddle a
+// Write boundary are only found if the seam falls inside this window, so it
+// must be larger than the longest marker. The raw Anthropic passthrough paths
+// copy upstream bytes in fixed-size network-aligned chunks, which routinely
+// split SSE frames mid-token.
+const scanTailMax = 64
 
 // responseWriter wraps http.ResponseWriter to track if headers were written.
 // It is safe for concurrent use: Write, WriteHeader, and Flush are serialized
@@ -60,6 +69,12 @@ type responseWriter struct {
 	wroteHeader       bool
 	ssePayloadWritten bool
 	contentWritten    bool
+	holdbackArmed     bool
+	holdbackBuf       []byte
+	holdbackLimit     int
+	scanTail          [scanTailMax]byte // tail of previous payload, for cross-write marker detection
+	scanTailLen       int
+	scanScratch       []byte // reused buffer: scanTail + current payload
 	usage             struct {
 		inputTokens              int
 		outputTokens             int
@@ -77,19 +92,80 @@ func (w *responseWriter) WriteHeader(code int) {
 	}
 }
 
+// ArmHoldback puts the writer in hold-back mode: SSE payloads are buffered
+// until answer content is detected or the byte limit is reached. Used before
+// each upstream attempt so a thinking-only stream can be discarded and retried
+// on another model without the client ever seeing it. limitBytes <= 0 selects
+// defaultHoldbackLimitBytes.
+func (w *responseWriter) ArmHoldback(limitBytes int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if limitBytes <= 0 {
+		limitBytes = defaultHoldbackLimitBytes
+	}
+	w.holdbackArmed = true
+	w.holdbackBuf = nil
+	w.holdbackLimit = limitBytes
+}
+
+// DiscardHoldback drops any buffered bytes and disarms hold-back mode. Called
+// when an attempt failed before releasing its buffer, so the next model starts
+// with a clean stream.
+func (w *responseWriter) DiscardHoldback() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.holdbackArmed = false
+	w.holdbackBuf = nil
+}
+
+// Write intercepts every outbound byte. While hold-back is armed and no
+// answer content has been seen, bytes accumulate in holdbackBuf instead of
+// reaching the client. Usage extraction and content detection run on every
+// byte regardless of hold state.
 func (w *responseWriter) Write(b []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if len(b) > 0 {
+		w.extractUsageFromSSE(b)
+		w.detectContentInSSE(b)
+		if w.holdbackArmed {
+			w.holdbackBuf = append(w.holdbackBuf, b...)
+			if w.contentWritten || len(w.holdbackBuf) >= w.holdbackLimit {
+				return w.flushHoldbackLocked()
+			}
+			return len(b), nil
+		}
+		if !w.wroteHeader {
+			w.wroteHeader = true
+			w.ResponseWriter.WriteHeader(http.StatusOK)
+		}
+		n, err := w.ResponseWriter.Write(b)
+		if n > 0 {
+			w.ssePayloadWritten = true
+		}
+		return n, err
+	}
+	return 0, nil
+}
+
+// flushHoldbackLocked writes the held prefix to the client and disarms
+// hold-back. Callers must hold w.mu.
+func (w *responseWriter) flushHoldbackLocked() (int, error) {
+	buf := w.holdbackBuf
+	w.holdbackBuf = nil
+	w.holdbackArmed = false
 	if !w.wroteHeader {
 		w.wroteHeader = true
 		w.ResponseWriter.WriteHeader(http.StatusOK)
 	}
-	if len(b) > 0 {
+	n, err := w.ResponseWriter.Write(buf)
+	if n > 0 {
 		w.ssePayloadWritten = true
-		w.extractUsageFromSSE(b)
-		w.detectContentInSSE(b)
 	}
-	return w.ResponseWriter.Write(b)
+	if err == nil && n < len(buf) {
+		return n, io.ErrShortWrite
+	}
+	return n, err
 }
 
 // extractUsageFromSSE parses SSE data and extracts usage information from message_delta events.
@@ -146,16 +222,73 @@ func (w *responseWriter) extractUsageFromSSE(b []byte) {
 	}
 }
 
+// detectContentInSSE scans an outgoing SSE payload for user-visible answer
+// content: text deltas, tool-use blocks, or incremental tool arguments.
+// Thinking deltas deliberately do NOT count — a stream that produced reasoning
+// but no answer must be classifiable as empty so it can trigger model fallback.
+// Each payload is scanned together with the tail of the previous payload, so
+// markers split across Write boundaries are still detected. tool_use block
+// starts are matched with JSON whitespace tolerance ("type": "tool_use"),
+// not just compact JSON.
 func (w *responseWriter) detectContentInSSE(b []byte) {
-	data := string(b)
-	if strings.Contains(data, `"content_block_start"`) ||
-		strings.Contains(data, `"content_block_delta"`) ||
-		strings.Contains(data, `"text_delta"`) ||
-		strings.Contains(data, `"content":"`) ||
-		strings.Contains(data, `"tool_use"`) ||
-		strings.Contains(data, `"thinking_delta"`) {
-		w.contentWritten = true
+	w.scanScratch = append(w.scanScratch[:0], w.scanTail[:w.scanTailLen]...)
+	w.scanScratch = append(w.scanScratch, b...)
+	if !w.contentWritten {
+		data := string(w.scanScratch)
+		if strings.Contains(data, `"text_delta"`) ||
+			strings.Contains(data, `"input_json_delta"`) ||
+			containsToolUseBlockStart(data) {
+			w.contentWritten = true
+		}
 	}
+	w.rememberScanTail(w.scanScratch)
+}
+
+// rememberScanTail keeps the last scanTailMax bytes of data so the next Write
+// can detect markers straddling the boundary between the two payloads.
+func (w *responseWriter) rememberScanTail(data []byte) {
+	n := len(data)
+	if n > scanTailMax {
+		n = scanTailMax
+	}
+	w.scanTailLen = copy(w.scanTail[:], data[len(data)-n:])
+}
+
+// containsToolUseBlockStart reports whether s declares a tool_use block: a
+// "type" key whose value is "tool_use", allowing JSON whitespace around the
+// colon. Matching the key/value pair — rather than the byte-exact compact
+// form `"type":"tool_use"` — keeps detection working when an upstream emits
+// pretty-printed JSON.
+func containsToolUseBlockStart(s string) bool {
+	const typeKey = `"type"`
+	for i := 0; i < len(s); {
+		idx := strings.Index(s[i:], typeKey)
+		if idx < 0 {
+			return false
+		}
+		i += idx + len(typeKey)
+		j := skipJSONSpace(s, i)
+		if j >= len(s) || s[j] != ':' {
+			continue
+		}
+		j = skipJSONSpace(s, j+1)
+		if strings.HasPrefix(s[j:], `"tool_use"`) {
+			return true
+		}
+	}
+	return false
+}
+
+func skipJSONSpace(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
 }
 
 func (w *responseWriter) hasContent() bool {
@@ -205,24 +338,6 @@ func parseIntAfter(s string, start int) (int, error) {
 	return sign * val, nil
 }
 
-// isLowValueResponse decides whether a completed stream should be treated as a
-// failure and trigger fallback. Currently this applies to long_context and
-// complex scenarios when the model produced very little output.
-func isLowValueResponse(scenario router.Scenario, outputTokens int, hasContent bool) bool {
-	if outputTokens >= 64 {
-		return false
-	}
-	if hasContent {
-		return false
-	}
-	switch scenario {
-	case router.ScenarioLongContext, router.ScenarioComplex:
-		return true
-	default:
-		return false
-	}
-}
-
 // headerWritten returns true if headers have been written to the response.
 // Safe for concurrent use.
 func (w *responseWriter) headerWritten() bool {
@@ -247,6 +362,11 @@ const (
 	defaultKeepaliveInterval = 3 * time.Second
 	keepaliveWriteTimeout    = 5 * time.Second
 )
+
+// defaultHoldbackLimitBytes caps how many SSE bytes may be withheld while
+// waiting for the first answer token. Streams exceeding the cap are released
+// progressively and lose the ability to fall back silently (same as today).
+const defaultHoldbackLimitBytes = 32 * 1024
 
 // WriteKeepalive writes a keepalive comment frame (":keepalive\n\n") to the
 // response. Unlike Write, it does NOT set ssePayloadWritten — keepalives are
@@ -330,6 +450,7 @@ func NewMessagesHandler(
 	captureLogger *debug.CaptureLogger,
 	hist *history.History,
 	storage StorageWriter,
+	emptyRespFallback *config.EmptyResponseFallbackConfig,
 ) *MessagesHandler {
 	return &MessagesHandler{
 		client:              openCodeClient,
@@ -349,6 +470,7 @@ func NewMessagesHandler(
 		captureLogger:       captureLogger,
 		history:             hist,
 		storage:             storage,
+		emptyRespFallback:   emptyRespFallback,
 	}
 }
 
@@ -640,6 +762,10 @@ func (h *MessagesHandler) handleStreaming(
 			continue
 		}
 
+		if h.emptyRespFallback.IsEnabled() {
+			rw.ArmHoldback(h.emptyRespFallback.LimitBytes())
+		}
+
 		h.logger.Info("attempting streaming model", "model", model.ModelID, "provider", model.Provider)
 
 		// Upstream context carries the streaming timeout configured for the model.
@@ -705,6 +831,7 @@ func (h *MessagesHandler) handleStreaming(
 					h.metrics.RecordFailureForModel(model.ModelID)
 					return false // abort
 				}
+				rw.DiscardHoldback()
 				return true // continue to next model
 			}
 			if err == transformer.ErrEmptyStream {
@@ -715,6 +842,7 @@ func (h *MessagesHandler) handleStreaming(
 					h.metrics.RecordFailureForModel(model.ModelID)
 					return false // abort
 				}
+				rw.DiscardHoldback()
 				return true // continue to next model
 			}
 			h.logger.Warn(action+" streaming failed", "model", model.ModelID, "error", err)
@@ -723,7 +851,39 @@ func (h *MessagesHandler) handleStreaming(
 				h.metrics.RecordFailureForModel(model.ModelID)
 				return false // abort — cannot fallback after SSE payload started
 			}
+			rw.DiscardHoldback()
 			return true // continue to next model
+		}
+
+		// emptyAnswerFallback reports whether the completed attempt produced no
+		// answer content and fallback should proceed to the next model.
+		emptyAnswerFallback := func(model config.ModelConfig, wireName string) bool {
+			if rw.hasContent() {
+				return false
+			}
+			h.logger.Warn("upstream stream ended without answer content, triggering fallback",
+				"model", model.ModelID, "provider", model.Provider,
+				"scenario", scenario, "output_tokens", rw.getOutputTokens())
+			if !handleStreamError(transformer.ErrEmptyStream, model, wireName) {
+				return false // abort
+			}
+			return true // continue
+		}
+
+		// attemptComplete finishes the current attempt: records success when
+		// answer content arrived, otherwise routes to fallback handling.
+		// Returns true when the overall request is finished — either success
+		// was recorded or an abort error event was already sent — so the
+		// caller must stop; false means try the next model.
+		attemptComplete := func(wireName string) bool {
+			if rw.hasContent() {
+				recordStreamSuccess(model)
+				return true
+			}
+			if !emptyAnswerFallback(model, wireName) {
+				return true // aborted; error event already sent
+			}
+			return false
 		}
 
 		// Try new provider-based dispatch first.
@@ -775,18 +935,10 @@ func (h *MessagesHandler) handleStreaming(
 					continue
 				}
 
-				if isLowValueResponse(scenario, rw.getOutputTokens(), rw.hasContent()) {
-					h.logger.Warn("upstream returned low-value response, triggering fallback",
-						"model", model.ModelID, "provider", model.Provider,
-						"scenario", scenario, "output_tokens", rw.getOutputTokens())
-					if !handleStreamError(transformer.ErrEmptyStream, model, wireFormat.String()) {
-						return
-					}
-					continue
+				if attemptComplete(wireFormat.String()) {
+					return
 				}
-
-				recordStreamSuccess(model)
-				return
+				continue
 			}
 		}
 
@@ -810,8 +962,10 @@ func (h *MessagesHandler) handleStreaming(
 						}
 						continue
 					}
-					recordStreamSuccess(model)
-					return
+					if attemptComplete("anthropic") {
+						return
+					}
+					continue
 				}
 
 			case client.EndpointResponses:
@@ -828,8 +982,10 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				recordStreamSuccess(model)
-				return
+				if attemptComplete("responses") {
+					return
+				}
+				continue
 
 			case client.EndpointGemini:
 				if err := h.handleGeminiStreaming(attemptCtx, rw, anthropicReq, model, clientCtx, idleTimeout, cancelAttempt); err != nil {
@@ -845,8 +1001,10 @@ func (h *MessagesHandler) handleStreaming(
 					}
 					continue
 				}
-				recordStreamSuccess(model)
-				return
+				if attemptComplete("gemini") {
+					return
+				}
+				continue
 
 			default:
 				// Fall through to OpenAI-compatible handling
@@ -863,8 +1021,10 @@ func (h *MessagesHandler) handleStreaming(
 				}
 				continue
 			}
-			recordStreamSuccess(model)
-			return
+			if attemptComplete("anthropic") {
+				return
+			}
+			continue
 		}
 
 		// OpenAI-compatible models (both Go and Zen)
@@ -903,11 +1063,14 @@ func (h *MessagesHandler) handleStreaming(
 			continue
 		}
 
-		recordStreamSuccess(model)
-		return
+		if attemptComplete("openai") {
+			return
+		}
+		continue
 	}
 
 	h.metrics.RecordFailure()
+	rw.DiscardHoldback()
 	if rw.ssePayloadWritten {
 		// SSE payload was already sent — do not attempt further writes
 		// beyond the error event.  The client has a partial stream.
@@ -1176,54 +1339,67 @@ func (h *MessagesHandler) handleNonStreaming(
 	ctx := r.Context()
 	startTime := time.Now()
 
-	result, responseBody, err := h.fallbackHandler.ExecuteWithFallback(
-		ctx,
-		modelChain,
-		func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
-			timeout := h.client.RequestTimeout(model)
-			attemptCtx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
+	attemptFn := func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+		timeout := h.client.RequestTimeout(model)
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 
-			// Try new provider-based dispatch first.
-			if h.providerRegistry != nil {
-				if prov, ok := h.providerRegistry.Get(client.Provider(model)); ok {
-					execResult, execErr := prov.Execute(attemptCtx, normalizedReq, model)
-					if execErr != nil {
-						return nil, execErr
-					}
-					return execResult.Body, nil
+		// Try new provider-based dispatch first.
+		if h.providerRegistry != nil {
+			if prov, ok := h.providerRegistry.Get(client.Provider(model)); ok {
+				execResult, execErr := prov.Execute(attemptCtx, normalizedReq, model)
+				if execErr != nil {
+					return nil, execErr
 				}
+				return execResult.Body, nil
 			}
+		}
 
-			h.logger.Warn("provider not found in registry, falling back to old client",
-				"provider", model.Provider, "model", model.ModelID)
+		h.logger.Warn("provider not found in registry, falling back to old client",
+			"provider", model.Provider, "model", model.ModelID)
 
-			// Legacy path: Zen models use their own endpoint classification
-			if client.IsZen(model) {
-				endpointType := client.ClassifyEndpoint(model.ModelID)
-				switch endpointType {
-				case client.EndpointAnthropic:
-					if model.AnthropicToolsDisabled {
-						// Fall through to OpenAI-compatible handling below.
-					} else {
-						return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
-					}
-				case client.EndpointResponses:
-					return h.executeResponsesRequest(attemptCtx, anthropicReq, model)
-				case client.EndpointGemini:
-					return h.executeGeminiRequest(attemptCtx, anthropicReq, model)
-				default:
-					// Fall through to OpenAI-compatible handling
+		// Legacy path: Zen models use their own endpoint classification
+		if client.IsZen(model) {
+			endpointType := client.ClassifyEndpoint(model.ModelID)
+			switch endpointType {
+			case client.EndpointAnthropic:
+				if model.AnthropicToolsDisabled {
+					// Fall through to OpenAI-compatible handling below.
+				} else {
+					return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
 				}
-			} else if client.IsAnthropicModel(model.ModelID) {
-				// Go provider Anthropic-native models (MiniMax, Qwen)
-				return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
+			case client.EndpointResponses:
+				return h.executeResponsesRequest(attemptCtx, anthropicReq, model)
+			case client.EndpointGemini:
+				return h.executeGeminiRequest(attemptCtx, anthropicReq, model)
+			default:
+				// Fall through to OpenAI-compatible handling
 			}
+		} else if client.IsAnthropicModel(model.ModelID) {
+			// Go provider Anthropic-native models (MiniMax, Qwen)
+			return h.executeAnthropicRequest(attemptCtx, replaceModelInRawBody(rawBody, model.ModelID), model)
+		}
 
-			// OpenAI-compatible models (both Go and Zen)
-			return h.executeOpenAIRequest(attemptCtx, anthropicReq, model)
-		},
-	)
+		// OpenAI-compatible models (both Go and Zen)
+		return h.executeOpenAIRequest(attemptCtx, anthropicReq, model)
+	}
+
+	exec := attemptFn
+	if h.emptyRespFallback.IsEnabled() {
+		exec = func(ctx context.Context, model config.ModelConfig) ([]byte, error) {
+			body, err := attemptFn(ctx, model)
+			if err != nil {
+				return nil, err
+			}
+			if !responseHasAnswerContent(body) {
+				h.logger.Warn("model returned no answer content, trying next model", "model", model.ModelID)
+				return nil, fmt.Errorf("%w: non-streaming response had no answer content", transformer.ErrEmptyStream)
+			}
+			return body, nil
+		}
+	}
+
+	result, responseBody, err := h.fallbackHandler.ExecuteWithFallback(ctx, modelChain, exec)
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -1385,6 +1561,28 @@ func (h *MessagesHandler) executeGeminiRequest(
 	}
 
 	return json.Marshal(anthropicResp)
+}
+
+// responseHasAnswerContent reports whether an Anthropic-format response body
+// carries user-visible answer content: a non-empty text block or any tool_use
+// block. Bodies that fail to parse count as content — opaque payloads are not
+// classified as empty here.
+func responseHasAnswerContent(body []byte) bool {
+	var resp types.MessageResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return true
+	}
+	for _, b := range resp.Content {
+		switch b.Type {
+		case "text":
+			if strings.TrimSpace(b.Text) != "" {
+				return true
+			}
+		case "tool_use":
+			return true
+		}
+	}
+	return false
 }
 
 // extractTextFromBlocks extracts plain text from Anthropic content blocks.

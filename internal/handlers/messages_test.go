@@ -18,6 +18,7 @@ import (
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
 	"github.com/routatic/proxy/internal/metrics"
+	"github.com/routatic/proxy/internal/provider"
 	"github.com/routatic/proxy/internal/router"
 	"github.com/routatic/proxy/internal/token"
 	"github.com/routatic/proxy/internal/transformer"
@@ -464,7 +465,7 @@ func TestHandleStreaming_UsageLimitSkipsRemainingProviderModels(t *testing.T) {
 	})
 	_ = registry.Register(&usageLimitStreamProvider{
 		name: "opencode-zen", calls: &zenCalls,
-		body: "event: message_start\ndata: {}\n\nevent: message_stop\ndata: {}\n\n",
+		body: "event: message_start\ndata: {}\n\nevent: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {}\n\n",
 	})
 	h := &MessagesHandler{
 		client:           client.NewOpenCodeClient(atomicCfg, nil),
@@ -883,6 +884,7 @@ func TestHandleMessages_UnknownProvider(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -918,6 +920,7 @@ func TestHandleMessages_StreamingMinimaxM3_UsesAnthropicEndpoint(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "event: message_start\ndata: {}\n\n")
+		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n")
 		_, _ = fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -966,6 +969,7 @@ func TestHandleMessages_StreamingMinimaxM3_UsesAnthropicEndpoint(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1081,6 +1085,7 @@ func TestHandleNonStreaming_GoAnthropicModel_ReplacesModelInBody(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1199,6 +1204,7 @@ func TestHandleNonStreaming_ZenAnthropicModel_ReplacesModelInBody(t *testing.T) 
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1564,6 +1570,7 @@ func TestHandleNonStreaming_ParentContextCanceled_No502(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1647,6 +1654,7 @@ func TestHandleNonStreaming_ParentDeadlineExceeded_No502(t *testing.T) {
 		nil, // captureLogger
 		nil, // hist
 		nil, // storage
+		nil, // emptyRespFallback
 	)
 	handler.logger = slog.Default()
 
@@ -1832,7 +1840,7 @@ func TestHandleStreaming_AnthropicRaw_NoKeepaliveInjection(t *testing.T) {
 		case <-blockCh:
 		case <-time.After(10 * time.Second):
 		}
-		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\"}\n\n")
+		_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -1888,5 +1896,778 @@ func TestHandleStreaming_AnthropicRaw_NoKeepaliveInjection(t *testing.T) {
 
 	if strings.Contains(body, ":keepalive") {
 		t.Errorf("keepalive comment leaked into Anthropic raw stream output (concurrent write bug):\n%s", body)
+	}
+}
+
+func TestDetectContentInSSE_AnswerMarkersOnly(t *testing.T) {
+	cases := []struct {
+		name  string
+		frame string
+		want  bool
+	}{
+		{
+			name:  "message start is not content",
+			frame: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"content\":[]}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "thinking block start is not content",
+			frame: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "thinking delta is not content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reasoning\"}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "tool_use stop reason is not content",
+			frame: "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":10}}\n\n",
+			want:  false,
+		},
+		{
+			name:  "text delta is content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+			want:  true,
+		},
+		{
+			name:  "tool_use block start is content",
+			frame: "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+			want:  true,
+		},
+		{
+			name:  "input_json_delta is content",
+			frame: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\":\"}}\n\n",
+			want:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rw := &responseWriter{ResponseWriter: httptest.NewRecorder()}
+			if _, err := rw.Write([]byte(tc.frame)); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if got := rw.hasContent(); got != tc.want {
+				t.Errorf("hasContent() = %v, want %v for frame %q", got, tc.want, tc.frame)
+			}
+		})
+	}
+}
+
+func TestHandleStreaming_DefaultScenario_ThinkingOnly_AbortsWithError(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"ONLY REASONING, NO ANSWER\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// Register the real Go provider so handleStreaming takes the provider
+	// registry path that contains the empty-answer guard (the legacy fallback
+	// path has no guard and would silently complete the stream).
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	// Single-model chain: fallback cannot proceed, so the request must end
+	// with a visible SSE error rather than a clean-but-empty turn.
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("expected exactly 1 upstream call, got %d", got)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("expected SSE error event for thinking-only stream under default scenario, body:\n%s", body)
+	}
+	// Until Task 4 adds the hold-back buffer, ProxyStream forwards every frame
+	// as it arrives, so message_stop reaches the client before the guard can
+	// fire. The Task-2 contract is therefore "visible failure, not success":
+	// the error event must trail the otherwise-clean stream.
+	if stop := strings.Index(body, "message_stop"); stop != -1 {
+		errIdx := strings.Index(body, `"type":"error"`)
+		if errIdx == -1 || errIdx < stop {
+			t.Errorf("error event must follow the forwarded stream frames, body:\n%s", body)
+		}
+	}
+}
+
+func TestResponseWriter_Holdback_BuffersUntilAnswerMarker(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(0) // 0 -> default limit
+
+	mustWrite := func(t *testing.T, rw *responseWriter, frame string) {
+		t.Helper()
+		if _, err := rw.Write([]byte(frame)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+
+	mustWrite(t, rw, "event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
+	if rec.Body.Len() != 0 {
+		t.Fatalf("bytes leaked to client while holding: %q", rec.Body.String())
+	}
+	if rw.ssePayloadWritten {
+		t.Error("ssePayloadWritten must stay false while holding")
+	}
+
+	mustWrite(t, rw, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n")
+	if rec.Body.Len() != 0 {
+		t.Fatalf("thinking frame leaked to client while holding: %q", rec.Body.String())
+	}
+
+	mustWrite(t, rw, "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+
+	body := rec.Body.String()
+	for _, want := range []string{"message_start", "thinking_delta", "text_delta"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("flushed stream missing %q; body:\n%s", want, body)
+		}
+	}
+	start := strings.Index(body, "message_start")
+	thinking := strings.Index(body, "thinking_delta")
+	text := strings.Index(body, "text_delta")
+	if !(start < thinking && thinking < text) {
+		t.Errorf("flushed frames out of order:\n%s", body)
+	}
+	if !rw.hasContent() {
+		t.Error("hasContent() = false after answer marker")
+	}
+	if !rw.ssePayloadWritten {
+		t.Error("ssePayloadWritten = false after release")
+	}
+}
+
+func TestResponseWriter_Holdback_LimitReleasesWithoutContent(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(8)
+
+	big := strings.Repeat("x", 100) // no answer markers
+	if _, err := rw.Write([]byte(big)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if rec.Body.Len() != 100 {
+		t.Errorf("expected buffer flush at limit, client got %d bytes", rec.Body.Len())
+	}
+	if rw.ssePayloadWritten != true {
+		t.Error("ssePayloadWritten must be true after limit release")
+	}
+	if rw.hasContent() {
+		t.Error("limit release must not fabricate content")
+	}
+	// Disarmed by release: subsequent writes pass straight through.
+	if _, err := rw.Write([]byte("second")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.HasSuffix(rec.Body.String(), "second") {
+		t.Errorf("post-release write not passed through: %q", rec.Body.String())
+	}
+}
+
+func TestResponseWriter_Holdback_DiscardDropsBuffer(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(0)
+	if _, err := rw.Write([]byte("event: message_start\ndata: {}\n\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	rw.DiscardHoldback()
+	if rec.Body.Len() != 0 {
+		t.Fatalf("discarded bytes reached client: %q", rec.Body.String())
+	}
+	// Disarmed by discard: next write passes through untouched.
+	if _, err := rw.Write([]byte("fresh")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := rec.Body.String(); got != "fresh" {
+		t.Errorf("post-discard write = %q, want %q", got, "fresh")
+	}
+}
+
+func TestResponseWriter_UnarmedPassthroughUnchanged(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	if _, err := rw.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := rec.Body.String(); got != "hello" {
+		t.Errorf("body = %q, want %q", got, "hello")
+	}
+	if !rw.ssePayloadWritten {
+		t.Error("unarmed write must set ssePayloadWritten")
+	}
+	if !rw.wroteHeader {
+		t.Error("first write must write header")
+	}
+}
+
+func TestHandleStreaming_ThinkingOnlyPrimary_FallsBackSilently(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if count == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"SECRET_THINKING_MODEL_ONE\"}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		}
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"FINAL_ANSWER_FROM_MODEL_TWO\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// Register the real Go provider so handleStreaming takes the provider
+	// registry path that contains the empty-answer guard.
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{
+		{Provider: "opencode-go", ModelID: "kimi-k2.6"},
+		{Provider: "opencode-go", ModelID: "glm-5"},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 2 {
+		t.Errorf("expected 2 upstream calls (empty primary + fallback), got %d", got)
+	}
+	if n := strings.Count(body, "event: message_start"); n != 1 {
+		t.Errorf("client must see exactly one message_start, got %d:\n%s", n, body)
+	}
+	if !strings.Contains(body, "FINAL_ANSWER_FROM_MODEL_TWO") {
+		t.Errorf("fallback answer missing from client stream:\n%s", body)
+	}
+	if strings.Contains(body, "SECRET_THINKING_MODEL_ONE") {
+		t.Errorf("primary model reasoning leaked to client:\n%s", body)
+	}
+	if strings.Contains(body, `"type":"error"`) {
+		t.Errorf("silent fallback must not surface an error event:\n%s", body)
+	}
+}
+
+func TestHandleStreaming_EmptyResponseFallbackDisabled_KeepsOldBehavior(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"VISIBLE_THINKING\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		providerRegistry:    registry,
+		streamProxy:         NewStreamProxy(),
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{Enabled: boolPtr(false)},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("disabled feature must not retry, calls = %d", got)
+	}
+	if !strings.Contains(body, "VISIBLE_THINKING") {
+		t.Errorf("disabled feature must stream thinking straight through:\n%s", body)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("disabled feature keeps Task-2 behavior: visible error event expected:\n%s", body)
+	}
+}
+
+func TestHandleStreaming_LegacyPath_ThinkingOnly_AbortsWithError(t *testing.T) {
+	var callCount int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"LEGACY_THINKING_ONLY\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:   upstream.URL,
+			TimeoutMs: 300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	// No providerRegistry/streamProxy: the attempt takes the legacy
+	// OpenAI-compat path. Hold-back is enabled (nil config defaults on).
+	handler := &MessagesHandler{
+		client:              ocClient,
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"kimi-k2.6","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	// Single-model chain: nothing to fall back to, so the buffered thinking-
+	// only attempt is discarded and a visible SSE error ends the request.
+	chain := []config.ModelConfig{{Provider: "opencode-go", ModelID: "kimi-k2.6"}}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true}, chain, rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("expected exactly 1 upstream call, got %d", got)
+	}
+	if !strings.Contains(body, `"type":"error"`) {
+		t.Errorf("legacy path must end with a visible SSE error for a thinking-only stream, body:\n%s", body)
+	}
+	if strings.Contains(body, "LEGACY_THINKING_ONLY") {
+		t.Errorf("discarded attempt reasoning leaked to client:\n%s", body)
+	}
+	if strings.Contains(body, "message_stop") {
+		t.Errorf("buffered attempt must not complete as a clean stream, body:\n%s", body)
+	}
+}
+
+func TestResponseHasAnswerContent(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"invalid json counts as content", `not-json{`, true},
+		{"empty content array", `{"id":"m","type":"message","role":"assistant","content":[],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"thinking only", `{"id":"m","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"deep thoughts"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"whitespace text", `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"  "}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":0}}`, false},
+		{"real text", `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"answer"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`, true},
+		{"tool use", `{"id":"m","type":"message","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := responseHasAnswerContent([]byte(tc.body)); got != tc.want {
+				t.Errorf("responseHasAnswerContent() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResponseWriter_Holdback_DetectsMarkerSplitAcrossWrites(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(0)
+
+	// The raw passthrough copies upstream bytes in network-aligned chunks,
+	// which can split an SSE frame — and the marker inside it — mid-token.
+	part1 := "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_"
+	part2 := "delta\",\"text\":\"hi\"}}\n\n"
+	if _, err := rw.Write([]byte(part1)); err != nil {
+		t.Fatalf("Write part1: %v", err)
+	}
+	if _, err := rw.Write([]byte(part2)); err != nil {
+		t.Fatalf("Write part2: %v", err)
+	}
+
+	if !rw.hasContent() {
+		t.Error("hasContent() = false; marker split across writes must still be detected")
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("content detection must release held bytes to the client")
+	}
+	if !strings.Contains(rec.Body.String(), `"text_delta"`) {
+		t.Errorf("flushed stream must contain the full frame:\n%s", rec.Body.String())
+	}
+}
+
+func TestResponseWriter_ContentDetection_ToleratesJSONWhitespaceInToolUse(t *testing.T) {
+	cases := []struct{ name, frame string }{
+		{
+			name:  "compact",
+			frame: "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{}}}\n\n",
+		},
+		{
+			name:  "spaced",
+			frame: "data: {\"type\": \"content_block_start\", \"index\": 0, \"content_block\": {\"type\": \"tool_use\", \"id\": \"t1\", \"name\": \"Bash\", \"input\": {}}}\n\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			rw := &responseWriter{ResponseWriter: rec}
+			rw.ArmHoldback(0)
+			if _, err := rw.Write([]byte(tc.frame)); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+			if !rw.hasContent() {
+				t.Errorf("tool_use block not detected in %s JSON", tc.name)
+			}
+		})
+	}
+}
+
+func TestResponseWriter_ContentDetection_TracksTailAfterRelease(t *testing.T) {
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+	rw.ArmHoldback(16)
+
+	// Exceed the limit with marker-free bytes: buffer releases, hold-back
+	// disarms, but detection must keep watching subsequent writes.
+	big := strings.Repeat("x", 64)
+	if _, err := rw.Write([]byte(big)); err != nil {
+		t.Fatalf("Write big: %v", err)
+	}
+	if !rw.ssePayloadWritten {
+		t.Fatal("limit release must have streamed bytes through")
+	}
+
+	part1 := "{\"delta\":{\"type\":\"text_"
+	part2 := "delta\",\"text\":\"after release\"}}\n\n"
+	if _, err := rw.Write([]byte(part1)); err != nil {
+		t.Fatalf("Write part1: %v", err)
+	}
+	if _, err := rw.Write([]byte(part2)); err != nil {
+		t.Fatalf("Write part2: %v", err)
+	}
+	if !rw.hasContent() {
+		t.Error("hasContent() = false; marker split across post-release writes must still be detected")
+	}
+}
+
+// chunkedAnthropicProvider serves a fixed body in exact byte chunks so tests
+// can control where the raw Anthropic passthrough splits frames.
+type chunkedAnthropicProvider struct {
+	name   string
+	calls  *int
+	chunks [][]byte
+}
+
+func (p *chunkedAnthropicProvider) Name() string { return p.name }
+func (p *chunkedAnthropicProvider) Capabilities() core.ProviderCapabilities {
+	return core.ProviderCapabilities{SupportsStreaming: true, SupportsTools: true}
+}
+func (p *chunkedAnthropicProvider) ModelCapabilities(string) (core.ProviderCapabilities, bool) {
+	return p.Capabilities(), true
+}
+func (p *chunkedAnthropicProvider) WireFormat(string) core.WireFormat {
+	return core.WireFormatAnthropic
+}
+func (p *chunkedAnthropicProvider) Execute(context.Context, *core.NormalizedRequest, config.ModelConfig) (*core.ExecuteResult, error) {
+	return nil, fmt.Errorf("execute not supported")
+}
+func (p *chunkedAnthropicProvider) Stream(context.Context, *core.NormalizedRequest, config.ModelConfig) (io.ReadCloser, error) {
+	*p.calls++
+	return &chunkReader{chunks: p.chunks}, nil
+}
+func (p *chunkedAnthropicProvider) RoundTripName(model config.ModelConfig) string {
+	return model.ModelID
+}
+func (p *chunkedAnthropicProvider) StreamIdleTimeout(config.ModelConfig) time.Duration {
+	return time.Minute
+}
+
+// chunkReader yields one chunk per Read regardless of the caller's buffer size.
+type chunkReader struct {
+	chunks [][]byte
+	pos    int
+}
+
+func (r *chunkReader) Read(b []byte) (int, error) {
+	if r.pos >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	n := copy(b, r.chunks[r.pos])
+	r.pos++
+	return n, nil
+}
+
+func (r *chunkReader) Close() error { return nil }
+
+func TestHandleStreaming_AnthropicPassthrough_CapExceededStreamsThroughThenErrors(t *testing.T) {
+	thinkingFrame := "event: content_block_delta\ndata: {\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"" + strings.Repeat("deep", 40) + "\"}}\n\n"
+	provider := &chunkedAnthropicProvider{
+		name:  "opencode-go",
+		calls: new(int),
+		chunks: [][]byte{
+			[]byte(thinkingFrame[:100]),
+			[]byte(thinkingFrame[100:]),
+			[]byte("event: message_stop\ndata: {}\n\n"),
+		},
+	}
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider)
+
+	handler := &MessagesHandler{
+		logger:            slog.Default(),
+		metrics:           metrics.New(),
+		providerRegistry:  registry,
+		streamProxy:       NewStreamProxy(),
+		emptyRespFallback: &config.EmptyResponseFallbackConfig{HoldbackLimitBytes: 64},
+	}
+
+	rawBody := json.RawMessage(`{"model":"minimax-m3","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true},
+		[]config.ModelConfig{{Provider: "opencode-go", ModelID: "minimax-m3"}},
+		rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if *provider.calls != 1 {
+		t.Errorf("expected exactly 1 upstream call, got %d", *provider.calls)
+	}
+	if !strings.Contains(body, "thinking_delta") {
+		t.Errorf("cap-exceeded stream must stream through to the client:\n%s", body)
+	}
+	errIdx := strings.Index(body, `"type":"error"`)
+	if errIdx == -1 {
+		t.Fatalf("cap-exceeded empty stream must surface a visible SSE error:\n%s", body)
+	}
+	if thinkIdx := strings.Index(body, "thinking_delta"); thinkIdx != -1 && errIdx < thinkIdx {
+		t.Errorf("error event must trail the streamed frames:\n%s", body)
+	}
+}
+
+func TestHandleStreaming_AnthropicPassthrough_SplitMarker_NoFalseEmpty(t *testing.T) {
+	validAnswer := "event: message_start\ndata: {\"type\":\"message_start\"}\n\n" +
+		"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_"
+	validAnswerTail := "delta\",\"text\":\"FIRST_MODEL_REAL_ANSWER\"}}\n\n" +
+		"event: message_stop\ndata: {}\n\n"
+
+	first := &chunkedAnthropicProvider{
+		name:  "opencode-go",
+		calls: new(int),
+		// Split exactly inside the text_delta marker.
+		chunks: [][]byte{[]byte(validAnswer), []byte(validAnswerTail)},
+	}
+	second := &chunkedAnthropicProvider{
+		name:  "opencode-zen",
+		calls: new(int),
+		chunks: [][]byte{[]byte("event: message_start\ndata: {\"type\":\"message_start\"}\n\n" +
+			"event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"SECOND_MODEL_ANSWER\"}}\n\n" +
+			"event: message_stop\ndata: {}\n\n")},
+	}
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(first)
+	_ = registry.Register(second)
+
+	handler := &MessagesHandler{
+		logger:            slog.Default(),
+		metrics:           metrics.New(),
+		providerRegistry:  registry,
+		streamProxy:       NewStreamProxy(),
+		emptyRespFallback: &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"minimax-m3","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{Stream: true},
+		[]config.ModelConfig{
+			{Provider: "opencode-go", ModelID: "minimax-m3"},
+			{Provider: "opencode-zen", ModelID: "qwen3.7-max"},
+		},
+		rawBody, router.ScenarioDefault, "")
+
+	body := recorder.Body.String()
+	if got := *first.calls; got != 1 {
+		t.Errorf("valid answer with split marker wasted attempts on primary: first.calls = %d", got)
+	}
+	if got := *second.calls; got != 0 {
+		t.Errorf("second model must not be called when primary answer is valid: second.calls = %d", got)
+	}
+	if !strings.Contains(body, "FIRST_MODEL_REAL_ANSWER") {
+		t.Errorf("primary answer missing from client stream:\n%s", body)
+	}
+	if strings.Contains(body, "SECOND_MODEL_ANSWER") {
+		t.Errorf("fallback answer leaked into client stream:\n%s", body)
+	}
+	if strings.Contains(body, `"type":"error"`) {
+		t.Errorf("spurious error appended after valid stream:\n%s", body)
+	}
+	if !strings.Contains(body, "message_stop") {
+		t.Errorf("stream must complete cleanly:\n%s", body)
+	}
+}
+
+func TestHandleNonStreaming_EmptyAnswer_FallsBackToNextModel(t *testing.T) {
+	var callCount int32
+	bodies := []string{
+		`{"id":"msg_1","type":"message","role":"assistant","model":"m1","content":[{"type":"thinking","thinking":"EMPTY_ANSWER_ATTEMPT"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":0}}`,
+		`{"id":"msg_2","type":"message","role":"assistant","model":"m2","content":[{"type":"text","text":"REAL_NONSTREAM_ANSWER"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}`,
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(bodies[min(int(count), len(bodies))-1]))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:          upstream.URL,
+			AnthropicBaseURL: upstream.URL,
+			TimeoutMs:        300000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+
+	handler := &MessagesHandler{
+		client:              ocClient,
+		logger:              slog.Default(),
+		metrics:             metrics.New(),
+		fallbackHandler:     router.NewFallbackHandler(slog.Default(), 3, 30*time.Second),
+		streamHandler:       transformer.NewStreamHandler(),
+		requestTransformer:  transformer.NewRequestTransformer(),
+		responseTransformer: transformer.NewResponseTransformer(),
+		emptyRespFallback:   &config.EmptyResponseFallbackConfig{},
+	}
+
+	rawBody := json.RawMessage(`{"model":"qwen3.7-max","stream":false,"max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{
+		{Provider: "opencode-go", ModelID: "qwen3.7-max"},
+		{Provider: "opencode-go", ModelID: "minimax-m3"},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	handler.handleNonStreaming(recorder, req, &anthropicReq, &core.NormalizedRequest{}, chain, rawBody, router.ScenarioDefault, "")
+
+	if got := atomic.LoadInt32(&callCount); got != 2 {
+		t.Errorf("expected 2 upstream calls (empty + fallback), got %d", got)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "REAL_NONSTREAM_ANSWER") {
+		t.Errorf("fallback body missing from response:\n%s", body)
+	}
+	if strings.Contains(body, "EMPTY_ANSWER_ATTEMPT") {
+		t.Errorf("failed attempt leaked into response:\n%s", body)
+	}
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", recorder.Code)
 	}
 }

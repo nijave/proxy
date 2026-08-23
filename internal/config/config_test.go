@@ -147,3 +147,65 @@ func TestConfig_CostRoutingDisabled(t *testing.T) {
 		t.Error("CostBasedRoutingEnabled() = true, want false when cost_routing.enabled is false")
 	}
 }
+
+func n(b bool) *bool { return &b }
+
+func TestEmptyResponseFallbackConfig_Defaults(t *testing.T) {
+	var nilCfg *EmptyResponseFallbackConfig
+	if !nilCfg.IsEnabled() {
+		t.Error("nil config must default to enabled (opt-out)")
+	}
+	if got := nilCfg.LimitBytes(); got != 32*1024 {
+		t.Errorf("nil config LimitBytes() = %d, want %d", got, 32*1024)
+	}
+
+	disabled := &EmptyResponseFallbackConfig{Enabled: n(false)}
+	if disabled.IsEnabled() {
+		t.Error("explicitly disabled config must not be enabled")
+	}
+	if got := (&EmptyResponseFallbackConfig{}).LimitBytes(); got != 32*1024 {
+		t.Errorf("zero limit must default to %d, got %d", 32*1024, got)
+	}
+	custom := &EmptyResponseFallbackConfig{HoldbackLimitBytes: 1024}
+	if got := custom.LimitBytes(); got != 1024 {
+		t.Errorf("custom limit = %d, want 1024", got)
+	}
+}
+
+func TestConfig_EmptyResponseFallbackField_Parsing(t *testing.T) {
+	raw := `{
+		"empty_response_fallback": {
+			"enabled": false,
+			"holdback_limit_bytes": 1024
+		}
+	}`
+
+	var cfg Config
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("failed to unmarshal Config: %v", err)
+	}
+
+	if cfg.EmptyResponseFallback == nil {
+		t.Fatal("EmptyResponseFallback = nil, want non-nil")
+	}
+	if cfg.EmptyResponseFallback.IsEnabled() {
+		t.Error("IsEnabled() = true, want false when explicitly disabled")
+	}
+	if got := cfg.EmptyResponseFallback.LimitBytes(); got != 1024 {
+		t.Errorf("LimitBytes() = %d, want 1024", got)
+	}
+}
+
+func TestConfig_EmptyResponseFallbackOmitted(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"api_key": "test-key"}`), &cfg); err != nil {
+		t.Fatalf("failed to unmarshal Config: %v", err)
+	}
+
+	if cfg.EmptyResponseFallback != nil {
+		t.Errorf("EmptyResponseFallback = %v, want nil when omitted from JSON", cfg.EmptyResponseFallback)
+	}
+	if !cfg.EmptyResponseFallback.IsEnabled() {
+		t.Error("nil block must default to enabled")
+	}
+}

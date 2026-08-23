@@ -21,6 +21,11 @@
     "base_url": "https://api.anthropic.com"
   },
 
+  "empty_response_fallback": {
+    "enabled": true,
+    "holdback_limit_bytes": 32768
+  },
+
   "models": {
     "background": {
       "provider": "opencode-go",
