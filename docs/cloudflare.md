@@ -82,9 +82,9 @@ Or add the `cloudflare` block and models to your `~/.config/routatic-proxy/confi
 | `gateway_id` | `string` | No | AI Gateway ID for caching, logging, and analytics (see below) |
 | `api_key` | `string` | Yes* | Single Workers AI API token. Required if `api_keys` not set |
 | `api_keys` | `string[]` | Yes* | Multiple tokens for round-robin rotation. Required if `api_key` not set |
-| `timeout_ms` | `int` | No | Request timeout in milliseconds. Default: `300000` (5 minutes) |
-| `stream_timeout_ms` | `int` | No | Per-chunk timeout during streaming. Falls back to `timeout_ms` when unset; default here: `60000` (1 minute) |
-| `streaming_timeout_ms` | `int` | No | Total timeout for long-running streams. Default: `600000` (10 minutes) |
+| `timeout_ms` | `int` | No | Request timeout in milliseconds. Preset: `300000` (5 minutes); when unset, falls back client-side with a final default of 5 minutes |
+| `stream_timeout_ms` | `int` | No | Per-chunk timeout during streaming. Preset: `60000` (1 minute); when unset, falls back to `timeout_ms` client-side |
+| `streaming_timeout_ms` | `int` | No | Total timeout for long-running streams. Preset: `600000` (10 minutes); when unset, falls back to `timeout_ms` client-side |
 
 *At least one of `api_key`/`api_keys` must be configured; `account_id` is required unless `base_url` is set.
 

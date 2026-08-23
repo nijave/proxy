@@ -423,6 +423,10 @@ The `model_id` in your config must match OpenRouter's model identifier exactly (
 }
 ```
 
+### Cloudflare Workers AI (`cloudflare`)
+
+routatic-proxy calls Cloudflare's OpenAI-compatible Workers AI endpoint, with the URL composed from your `account_id` at request time. An optional `gateway_id` routes requests through AI Gateway for caching, logging, and analytics. See [docs/cloudflare.md](docs/cloudflare.md) for full setup.
+
 ## Environment Variables
 
 Environment variables override config file values. Config values also support `${VAR}` interpolation.
