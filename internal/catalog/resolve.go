@@ -8,11 +8,17 @@ import (
 )
 
 // ParseModelRef parses a model reference string into a Selector.
-// Supported forms:
-//   - lab/model@provider -> {Provider: "provider", Model: "model", Alias: "lab/model"}
-//   - model@provider     -> {Provider: "provider", Model: "model", Alias: "model"}
-//   - lab/model          -> {Model: "model", Alias: "lab/model"}
-//   - model              -> {Model: "model", Alias: "model"}
+// Supported forms (the provider qualifier is the text after the LAST "@"):
+//   - lab/model@provider     -> {Provider: "provider", Model: "lab/model", Alias: "lab/model"}
+//   - model@provider         -> {Provider: "provider", Model: "model", Alias: "model"}
+//   - @org/ns/model          -> Workers AI-style id parsed verbatim: {Model: "@org/ns/model", Alias: same}; requires "/" after the leading "@"
+//   - @org/ns/model@provider -> {Provider: "provider", Model: "@org/ns/model", Alias: "@org/ns/model"}
+//   - lab/model              -> legacy trailing-segment split: {Model: "model", Alias: "lab/model"}
+//   - model                  -> {Model: "model", Alias: "model"}
+//
+// A bare "@provider" (leading "@" with no "/") remains an empty-model error,
+// and multiple "@" separators are only allowed when the reference itself
+// starts with "@" (Workers AI ids).
 func ParseModelRef(ref string) (Selector, error) {
 	if ref == "" {
 		return Selector{}, errors.New("model reference is empty")
@@ -43,9 +49,6 @@ func ParseModelRef(ref string) (Selector, error) {
 		return Selector{Model: ref, Alias: ref}, nil
 	case atCount == 1:
 		modelPart := ref[:last]
-		if modelPart == "" {
-			return Selector{}, fmt.Errorf("model id is empty in reference %q", ref)
-		}
 		return Selector{Provider: ref[last+1:], Model: modelPart, Alias: modelPart}, nil
 	case atCount == 2 && ref[0] == '@':
 		// Workers AI id plus provider: "@cf/org/model@provider".
@@ -197,13 +200,14 @@ func (ic *IndexedCatalog) findModel(sel Selector) (Model, string) {
 			return model, composite
 		}
 	}
-	if model, ok := ic.Models[sel.Model]; ok {
-		return model, sel.Model
-	}
-	// Try alias: if user asked "xai/grok-4.5", look it up directly.
-	if sel.Alias != "" {
-		if model, ok := ic.Models[sel.Alias]; ok {
-			return model, sel.Alias
+	if sel.Provider == "" {
+		if model, ok := ic.Models[sel.Model]; ok {
+			return model, sel.Model
+		}
+		if sel.Alias != "" {
+			if model, ok := ic.Models[sel.Alias]; ok {
+				return model, sel.Alias
+			}
 		}
 	}
 	// Try full key "provider/model-name" built from model name.

@@ -437,3 +437,52 @@ func TestResolve_SlashedModelIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestResolve_ProviderQualifiedDoesNotShadow(t *testing.T) {
+	newCat := func() *IndexedCatalog {
+		return &IndexedCatalog{
+			Catalog: Catalog{
+				Providers: map[string]Provider{
+					"zhipuai-coding-plan": {Name: "zhipuai-coding-plan", BaseURL: "https://zhip.test/v1", Enabled: boolPtr(true)},
+					"opencode-go":         {Name: "opencode-go", BaseURL: "https://go.test/v1", Enabled: boolPtr(true)},
+				},
+				Models: map[string]Model{
+					"zhipuai-coding-plan/glm-5.3": {ID: "zhipuai-coding-plan/glm-5.3", Name: "GLM 5.3"},
+					"opencode-go/glm-5.3":         {ID: "opencode-go/glm-5.3", Name: "GLM 5.3"},
+				},
+			},
+		}
+	}
+
+	sel, err := ParseModelRef("zhipuai-coding-plan/glm-5.3@opencode-go")
+	if err != nil {
+		t.Fatalf("ParseModelRef error = %v", err)
+	}
+	got, err := newCat().Resolve(sel)
+	if err != nil {
+		t.Fatalf("Resolve(%+v) error = %v", sel, err)
+	}
+	if got.CanonicalName != "opencode-go/glm-5.3" {
+		t.Errorf("Resolve resolved %q, want opencode-go/glm-5.3 (blind probe shadowed the provider-aware fallback)", got.CanonicalName)
+	}
+}
+
+func TestResolve_UnresolvableQualifiedRefErrors(t *testing.T) {
+	cat := &IndexedCatalog{
+		Catalog: Catalog{
+			Providers: map[string]Provider{
+				"opencode-go": {Name: "opencode-go", BaseURL: "https://go.test/v1", Enabled: boolPtr(true)},
+			},
+			Models: map[string]Model{
+				"opencode-go/kimi-k2.6": {ID: "opencode-go/kimi-k2.6", Name: "Kimi K2.6"},
+			},
+		},
+	}
+	sel, err := ParseModelRef("nosuch/x@opencode-go")
+	if err != nil {
+		t.Fatalf("ParseModelRef error = %v", err)
+	}
+	if _, err := cat.Resolve(sel); err == nil {
+		t.Errorf("Resolve(%+v) expected error for unresolvable provider-qualified ref", sel)
+	}
+}
