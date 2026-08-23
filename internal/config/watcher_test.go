@@ -52,8 +52,14 @@ func TestWatchConfig_DetectsFileChange(t *testing.T) {
 	// Wait for reload notification with timeout
 	select {
 	case <-reloaded:
-		if at.Get().APIKey != "watcher-updated" {
-			t.Errorf("after reload, APIKey = %q, want %q", at.Get().APIKey, "watcher-updated")
+		// Reload invokes callbacks before swapping the config in, so
+		// poll briefly for the new value to become visible.
+		deadline := time.Now().Add(5 * time.Second)
+		for at.Get().APIKey != "watcher-updated" {
+			if time.Now().After(deadline) {
+				t.Fatalf("after reload callback, APIKey = %q, want %q", at.Get().APIKey, "watcher-updated")
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("config was not reloaded after file change")

@@ -2062,7 +2062,7 @@ func TestResponseWriter_Holdback_BuffersUntilAnswerMarker(t *testing.T) {
 	start := strings.Index(body, "message_start")
 	thinking := strings.Index(body, "thinking_delta")
 	text := strings.Index(body, "text_delta")
-	if !(start < thinking && thinking < text) {
+	if start >= thinking || thinking >= text {
 		t.Errorf("flushed frames out of order:\n%s", body)
 	}
 	if !rw.hasContent() {
