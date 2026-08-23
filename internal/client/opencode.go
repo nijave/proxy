@@ -52,6 +52,8 @@ const (
 	ProviderOpenCodeZen = "opencode-zen"
 	ProviderAWSBedrock  = "aws-bedrock"
 	ProviderOpenRouter  = "openrouter"
+
+	ProviderCloudflare = "cloudflare"
 )
 
 // APIError represents an HTTP API error returned by an upstream provider.
@@ -104,6 +106,10 @@ func (c *OpenCodeClient) getProviderAPIKeys(modelConfig config.ModelConfig) []st
 		if keys := cfg.OpenRouter.EffectiveAPIKeys(); len(keys) > 0 {
 			return keys
 		}
+	case IsCloudflare(modelConfig):
+		if keys := cfg.Cloudflare.EffectiveAPIKeys(); len(keys) > 0 {
+			return keys
+		}
 	default:
 		if keys := cfg.OpenCodeGo.EffectiveAPIKeys(); len(keys) > 0 {
 			return keys
@@ -133,6 +139,8 @@ func ProviderKeyCount(atomicCfg *config.AtomicConfig, provider string) int {
 		keys = cfg.AWSBedrock.EffectiveAPIKeys()
 	case ProviderOpenRouter:
 		keys = cfg.OpenRouter.EffectiveAPIKeys()
+	case ProviderCloudflare:
+		keys = cfg.Cloudflare.EffectiveAPIKeys()
 	default:
 		// Unknown provider - default to global keys
 		keys = cfg.EffectiveAPIKeys()
@@ -197,6 +205,11 @@ func (c *OpenCodeClient) StreamIdleTimeout(modelConfig config.ModelConfig) time.
 		if ms <= 0 {
 			ms = cfg.OpenRouter.TimeoutMs
 		}
+	case IsCloudflare(modelConfig):
+		ms = cfg.Cloudflare.StreamTimeoutMs
+		if ms <= 0 {
+			ms = cfg.Cloudflare.TimeoutMs
+		}
 	default:
 		ms = cfg.OpenCodeGo.StreamTimeoutMs
 		if ms <= 0 {
@@ -223,6 +236,8 @@ func (c *OpenCodeClient) RequestTimeout(model config.ModelConfig) time.Duration 
 		timeoutMs = cfg.OpenCodeZen.TimeoutMs
 	case IsOpenRouter(model):
 		timeoutMs = cfg.OpenRouter.TimeoutMs
+	case IsCloudflare(model):
+		timeoutMs = cfg.Cloudflare.TimeoutMs
 	default:
 		timeoutMs = cfg.OpenCodeGo.TimeoutMs
 	}
@@ -254,6 +269,11 @@ func (c *OpenCodeClient) StreamingTimeout(model config.ModelConfig) time.Duratio
 		timeoutMs = cfg.OpenRouter.StreamingTimeoutMs
 		if timeoutMs <= 0 {
 			timeoutMs = cfg.OpenRouter.TimeoutMs
+		}
+	case IsCloudflare(model):
+		timeoutMs = cfg.Cloudflare.StreamingTimeoutMs
+		if timeoutMs <= 0 {
+			timeoutMs = cfg.Cloudflare.TimeoutMs
 		}
 	default:
 		timeoutMs = cfg.OpenCodeGo.StreamingTimeoutMs
@@ -322,6 +342,11 @@ func IsOpenRouter(model config.ModelConfig) bool {
 	return Provider(model) == ProviderOpenRouter
 }
 
+// IsCloudflare returns true if the model uses the Cloudflare Workers AI provider.
+func IsCloudflare(model config.ModelConfig) bool {
+	return Provider(model) == ProviderCloudflare
+}
+
 // EndpointType determines which Zen endpoint format to use.
 type EndpointType int
 
@@ -387,6 +412,11 @@ func (c *OpenCodeClient) getEndpoint(modelID string, modelConfig config.ModelCon
 		return endpointConfig{BaseURL: cfg.OpenRouter.BaseURL, APIKey: apiKey}
 	}
 
+	if IsCloudflare(modelConfig) {
+		cf := cfg.Cloudflare
+		return endpointConfig{BaseURL: cf.EffectiveBaseURL(), APIKey: apiKey, GatewayID: cf.GatewayID}
+	}
+
 	// Default: OpenCode Go
 	if models.IsAnthropicModel(modelID) {
 		return endpointConfig{BaseURL: cfg.OpenCodeGo.AnthropicBaseURL, APIKey: apiKey}
@@ -396,8 +426,9 @@ func (c *OpenCodeClient) getEndpoint(modelID string, modelConfig config.ModelCon
 
 // endpointConfig holds configuration for a specific API endpoint.
 type endpointConfig struct {
-	BaseURL string
-	APIKey  string
+	BaseURL   string
+	APIKey    string
+	GatewayID string // optional cf-aig-gateway-id (Cloudflare AI Gateway)
 }
 
 // ChatCompletion sends a chat completion request.
@@ -434,6 +465,10 @@ func (c *OpenCodeClient) ChatCompletion(
 
 	if req.Stream != nil && *req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+
+	if endpoint.GatewayID != "" {
+		httpReq.Header.Set("cf-aig-gateway-id", endpoint.GatewayID)
 	}
 
 	resp, err := c.httpClient.Do(httpReq)
