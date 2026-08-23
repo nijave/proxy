@@ -23,7 +23,11 @@ func ParseModelRef(ref string) (Selector, error) {
 		// No provider qualifier: keep legacy behavior — bare "lab/model"
 		// refs select on the trailing segment.
 		if idx := strings.LastIndex(ref, "/"); idx >= 0 {
-			return Selector{Model: ref[idx+1:], Alias: ref}, nil
+			model := ref[idx+1:]
+			if model == "" {
+				return Selector{}, fmt.Errorf("model id is empty in reference %q", ref)
+			}
+			return Selector{Model: model, Alias: ref}, nil
 		}
 		return Selector{Model: ref, Alias: ref}, nil
 	}

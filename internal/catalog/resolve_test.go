@@ -153,6 +153,11 @@ func TestParseModelRef(t *testing.T) {
 			ref:     "@provider",
 			wantErr: true,
 		},
+		{
+			name:    "trailing slash without provider",
+			ref:     "x/",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
