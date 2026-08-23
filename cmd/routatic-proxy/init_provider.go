@@ -46,6 +46,13 @@ var providerPresets = map[string]ProviderPreset{
 		BaseURL:     "https://openrouter.ai/api/v1/chat/completions",
 		Generator:   getOpenRouterConfig,
 	},
+	"cloudflare": {
+		Name:        "Cloudflare Workers AI",
+		EnvVarName:  "ROUTATIC_PROXY_CLOUDFLARE_API_KEY",
+		Description: "Cloudflare Workers AI - serverless inference on Cloudflare's global network",
+		BaseURL:     "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions",
+		Generator:   getCloudflareConfig,
+	},
 }
 
 // getProviderConfig returns a config template optimized for a specific provider.
@@ -376,4 +383,93 @@ func getOpenCodeZenConfig() string {
 // nothing to keep in sync by hand.
 func getOpenCodeGoConfig() string {
 	return getDefaultConfig()
+}
+
+// getCloudflareConfig returns a config optimized for Cloudflare Workers AI.
+func getCloudflareConfig() string {
+	return `{
+  "api_key": "${ROUTATIC_PROXY_API_KEY}",
+  "host": "127.0.0.1",
+  "port": 3456,
+  "hot_reload": false,
+  "enable_streaming_scenario_routing": false,
+  "respect_requested_model": false,
+
+  "models": {
+    "default": {
+      "provider": "cloudflare",
+      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "background": {
+      "provider": "cloudflare",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct",
+      "temperature": 0.5,
+      "max_tokens": 2048
+    },
+    "think": {
+      "provider": "cloudflare",
+      "model_id": "@cf/moonshotai/kimi-k2.6",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "complex": {
+      "provider": "cloudflare",
+      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "temperature": 0.7,
+      "max_tokens": 8192
+    },
+    "long_context": {
+      "provider": "cloudflare",
+      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "temperature": 0.7,
+      "max_tokens": 16384,
+      "context_threshold": 80000
+    },
+    "fast": {
+      "provider": "cloudflare",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct",
+      "temperature": 0.7,
+      "max_tokens": 4096
+    }
+  },
+
+  "fallbacks": {
+    "default": [
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+    ],
+    "background": [
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+    ],
+    "think": [
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8" }
+    ],
+    "complex": [
+      { "provider": "cloudflare", "model_id": "@cf/moonshotai/kimi-k2.6" }
+    ],
+    "long_context": [
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8" }
+    ],
+    "fast": [
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+    ]
+  },
+
+  "cloudflare": {
+    "account_id": "${ROUTATIC_PROXY_CLOUDFLARE_ACCOUNT_ID}",
+    "gateway_id": "",
+    "api_key": "${ROUTATIC_PROXY_CLOUDFLARE_API_KEY}",
+    "api_keys": [],
+    "timeout_ms": 300000,
+    "stream_timeout_ms": 60000,
+    "streaming_timeout_ms": 600000
+  },
+
+  "logging": {
+    "level": "info",
+    "requests": true
+  }
+}
+`
 }
