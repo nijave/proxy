@@ -437,6 +437,10 @@ Environment variables override config file values. Config values also support `$
 | `ROUTATIC_PROXY_OPENCODE_ZEN_URL` | OpenCode Zen API endpoint              | `https://opencode.ai/zen/v1/chat/completions`    |
 | `ROUTATIC_PROXY_OPENROUTER_API_KEY` | OpenRouter single API key           | —                                                |
 | `ROUTATIC_PROXY_OPENROUTER_API_KEYS` | OpenRouter key pool (comma-separated) | —                                             |
+| `ROUTATIC_PROXY_CLOUDFLARE_API_KEY` | Cloudflare Workers AI API token        | —                                                |
+| `ROUTATIC_PROXY_CLOUDFLARE_API_KEYS` | Cloudflare comma-separated tokens for rotation | —                                       |
+| `ROUTATIC_PROXY_CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID used to build the endpoint | —                              |
+| `ROUTATIC_PROXY_CLOUDFLARE_BASE_URL` | Full chat-completions URL override     | —                                                |
 | `ROUTATIC_PROXY_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error` | `info`                                           |
 
 Legacy equivalents such as `OC_GO_CC_API_KEY`, `OC_GO_CC_CONFIG`, and `OC_GO_CC_PORT` continue to work. When both names are set, the `ROUTATIC_PROXY_*` value wins.
