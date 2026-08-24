@@ -7,8 +7,8 @@ func TestCloudflareValidateAuthMode(t *testing.T) {
 	if valid.EffectiveAPIKeys() != nil {
 		t.Errorf("injected mode should not require keys")
 	}
-	if !(AuthModeBearer == "bearer") || !(AuthModeInjected == "injected") {
-		t.Errorf("unexpected constant values")
+	if AuthModeBearer != "bearer" || AuthModeInjected != "injected" {
+		t.Errorf("unexpected constant values: %q, %q", AuthModeBearer, AuthModeInjected)
 	}
 }
 
