@@ -76,11 +76,11 @@ func TestParseModelRef(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "lab/model@provider",
+			name: "lab/model@provider keeps slashed id verbatim",
 			ref:  "deepseek/deepseek-v4-flash@opencode-go",
 			want: Selector{
 				Provider: "opencode-go",
-				Model:    "deepseek-v4-flash",
+				Model:    "deepseek/deepseek-v4-flash",
 				Alias:    "deepseek/deepseek-v4-flash",
 			},
 		},
@@ -112,6 +112,33 @@ func TestParseModelRef(t *testing.T) {
 			},
 		},
 		{
+			name: "workers ai slashed id@provider",
+			ref:  "@cf/meta/llama-3.1-8b-instruct@cloudflare",
+			want: Selector{
+				Provider: "cloudflare",
+				Model:    "@cf/meta/llama-3.1-8b-instruct",
+				Alias:    "@cf/meta/llama-3.1-8b-instruct",
+			},
+		},
+		{
+			name: "leading-@ slashed id without provider parses verbatim",
+			ref:  "@cf/meta/llama-3.1-8b-instruct",
+			want: Selector{
+				Provider: "",
+				Model:    "@cf/meta/llama-3.1-8b-instruct",
+				Alias:    "@cf/meta/llama-3.1-8b-instruct",
+			},
+		},
+		{
+			name: "three segment lab/model@provider",
+			ref:  "meta-llama/Llama-3.3-70B-Instruct@openrouter",
+			want: Selector{
+				Provider: "openrouter",
+				Model:    "meta-llama/Llama-3.3-70B-Instruct",
+				Alias:    "meta-llama/Llama-3.3-70B-Instruct",
+			},
+		},
+		{
 			name:    "empty reference",
 			ref:     "",
 			wantErr: true,
@@ -124,6 +151,11 @@ func TestParseModelRef(t *testing.T) {
 		{
 			name:    "empty model id",
 			ref:     "@provider",
+			wantErr: true,
+		},
+		{
+			name:    "trailing slash without provider",
+			ref:     "x/",
 			wantErr: true,
 		},
 	}
@@ -333,5 +365,124 @@ func TestListProviderModels(t *testing.T) {
 		if m.Provider != "opencode-go" {
 			t.Errorf("model %q has provider %q, want %q", m.ModelID, m.Provider, "opencode-go")
 		}
+	}
+}
+
+func TestResolve_SlashedModelIDs(t *testing.T) {
+	newCat := func() *IndexedCatalog {
+		return &IndexedCatalog{
+			Catalog: Catalog{
+				Providers: map[string]Provider{
+					"cloudflare": {
+						Name:    "cloudflare",
+						BaseURL: "https://api.cloudflare.com/client/v4/accounts/acct/ai/v1/chat/completions",
+						Enabled: boolPtr(true),
+					},
+					"opencode-go": {
+						Name:    "opencode-go",
+						BaseURL: "https://example.test/v1",
+						Enabled: boolPtr(true),
+					},
+				},
+				Models: map[string]Model{
+					"cloudflare/@cf/meta/llama-3.1-8b-instruct": {
+						ID:   "cloudflare/@cf/meta/llama-3.1-8b-instruct",
+						Name: "Llama 3.1 8B",
+					},
+					"opencode-go/deepseek-v4-flash": {
+						ID:       "opencode-go/deepseek-v4-flash",
+						Name:     "DeepSeek V4 Flash",
+						ToolCall: true,
+						Limit:    &Limit{Context: 128000},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name        string
+		ref         string
+		wantCanon   string
+		wantModelID string
+	}{
+		{
+			name:        "workers ai ref resolves by composite key",
+			ref:         "@cf/meta/llama-3.1-8b-instruct@cloudflare",
+			wantCanon:   "cloudflare/@cf/meta/llama-3.1-8b-instruct",
+			wantModelID: "@cf/meta/llama-3.1-8b-instruct",
+		},
+		{
+			name:        "legacy lab/model@provider still resolves",
+			ref:         "deepseek/deepseek-v4-flash@opencode-go",
+			wantCanon:   "opencode-go/deepseek-v4-flash",
+			wantModelID: "deepseek-v4-flash",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sel, err := ParseModelRef(tt.ref)
+			if err != nil {
+				t.Fatalf("ParseModelRef(%q) error = %v", tt.ref, err)
+			}
+			got, err := newCat().Resolve(sel)
+			if err != nil {
+				t.Fatalf("Resolve(%+v) error = %v", sel, err)
+			}
+			if got.CanonicalName != tt.wantCanon || got.ModelID != tt.wantModelID {
+				t.Errorf("Resolve(%q) = canon=%q modelID=%q, want canon=%q modelID=%q",
+					tt.ref, got.CanonicalName, got.ModelID, tt.wantCanon, tt.wantModelID)
+			}
+		})
+	}
+}
+
+func TestResolve_ProviderQualifiedDoesNotShadow(t *testing.T) {
+	newCat := func() *IndexedCatalog {
+		return &IndexedCatalog{
+			Catalog: Catalog{
+				Providers: map[string]Provider{
+					"zhipuai-coding-plan": {Name: "zhipuai-coding-plan", BaseURL: "https://zhip.test/v1", Enabled: boolPtr(true)},
+					"opencode-go":         {Name: "opencode-go", BaseURL: "https://go.test/v1", Enabled: boolPtr(true)},
+				},
+				Models: map[string]Model{
+					"zhipuai-coding-plan/glm-5.3": {ID: "zhipuai-coding-plan/glm-5.3", Name: "GLM 5.3"},
+					"opencode-go/glm-5.3":         {ID: "opencode-go/glm-5.3", Name: "GLM 5.3"},
+				},
+			},
+		}
+	}
+
+	sel, err := ParseModelRef("zhipuai-coding-plan/glm-5.3@opencode-go")
+	if err != nil {
+		t.Fatalf("ParseModelRef error = %v", err)
+	}
+	got, err := newCat().Resolve(sel)
+	if err != nil {
+		t.Fatalf("Resolve(%+v) error = %v", sel, err)
+	}
+	if got.CanonicalName != "opencode-go/glm-5.3" {
+		t.Errorf("Resolve resolved %q, want opencode-go/glm-5.3 (blind probe shadowed the provider-aware fallback)", got.CanonicalName)
+	}
+}
+
+func TestResolve_UnresolvableQualifiedRefErrors(t *testing.T) {
+	cat := &IndexedCatalog{
+		Catalog: Catalog{
+			Providers: map[string]Provider{
+				"opencode-go": {Name: "opencode-go", BaseURL: "https://go.test/v1", Enabled: boolPtr(true)},
+			},
+			Models: map[string]Model{
+				"opencode-go/kimi-k2.6": {ID: "opencode-go/kimi-k2.6", Name: "Kimi K2.6"},
+			},
+		},
+	}
+	sel, err := ParseModelRef("nosuch/x@opencode-go")
+	if err != nil {
+		t.Fatalf("ParseModelRef error = %v", err)
+	}
+	if _, err := cat.Resolve(sel); err == nil {
+		t.Errorf("Resolve(%+v) expected error for unresolvable provider-qualified ref", sel)
 	}
 }
