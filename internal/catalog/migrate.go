@@ -177,6 +177,8 @@ func syncToSQLite(ctx context.Context, db *storage.Database, sourceURL string) (
 		return 0, 0, fmt.Errorf("parse catalog contents: %w", err)
 	}
 
+	catalog.ingestProviderModels()
+
 	providers := make([]storage.ProviderRecord, 0, len(catalog.Providers))
 	for name, p := range catalog.Providers {
 		providers = append(providers, providerToStorageRecord(name, p))

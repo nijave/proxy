@@ -34,6 +34,8 @@ func Load(path string) (*IndexedCatalog, error) {
 		return nil, fmt.Errorf("parse catalog json: %w", err)
 	}
 
+	catalog.ingestProviderModels()
+
 	if err := validateCatalog(&catalog); err != nil {
 		return nil, err
 	}
