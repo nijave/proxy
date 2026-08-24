@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -1025,5 +1027,189 @@ func TestGetProviderAPIKeys_EmptyReturnsGlobal(t *testing.T) {
 	want := []string{"global-single-key"}
 	if len(got) != len(want) || got[0] != want[0] {
 		t.Errorf("getProviderAPIKeys() = %v, want %v (should fallback to global)", got, want)
+	}
+}
+
+func TestCloudflareKeys(t *testing.T) {
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{APIKey: "cf-specific-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/meta/llama-3.1-8b-instruct"}
+	got := c.getProviderAPIKeys(model)
+
+	if len(got) != 1 || got[0] != "cf-specific-key" {
+		t.Errorf("getProviderAPIKeys() = %v, want [cf-specific-key]", got)
+	}
+}
+
+func TestCloudflareEndpoint_BuildsURLFromAccountID(t *testing.T) {
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{AccountID: "acct123", APIKey: "cf-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/meta/llama-3.1-8b-instruct"}
+	endpoint := c.getEndpoint("@cf/meta/llama-3.1-8b-instruct", model)
+
+	want := "https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1/chat/completions"
+	if endpoint.BaseURL != want {
+		t.Errorf("getEndpoint BaseURL = %q, want %q", endpoint.BaseURL, want)
+	}
+}
+
+func TestCloudflareEndpoint_BaseURLOverrideWins(t *testing.T) {
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{AccountID: "acct123", BaseURL: "http://custom.test/cf", APIKey: "cf-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/meta/llama-3.1-8b-instruct"}
+	endpoint := c.getEndpoint("@cf/meta/llama-3.1-8b-instruct", model)
+
+	if endpoint.BaseURL != "http://custom.test/cf" {
+		t.Errorf("getEndpoint BaseURL = %q, want http://custom.test/cf", endpoint.BaseURL)
+	}
+}
+
+func TestCloudflareTimeout(t *testing.T) {
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{
+			TimeoutMs:          120000,
+			StreamTimeoutMs:    180000,
+			StreamingTimeoutMs: 240000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/model"}
+	if got := c.RequestTimeout(model); got != 120*time.Second {
+		t.Errorf("RequestTimeout = %v, want 120s", got)
+	}
+	if got := c.StreamIdleTimeout(model); got != 180*time.Second {
+		t.Errorf("StreamIdleTimeout = %v, want 180s", got)
+	}
+	if got := c.StreamingTimeout(model); got != 240*time.Second {
+		t.Errorf("StreamingTimeout = %v, want 240s", got)
+	}
+}
+
+func TestCloudflareChatCompletion_BearerAuthAndModelBody(t *testing.T) {
+	var gotAuth, gotGateway, gotBody string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotGateway = r.Header.Get("cf-aig-gateway-id")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-1","object":"chat.completion","created":1,"model":"@cf/meta/llama-3.1-8b-instruct","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{BaseURL: ts.URL, APIKey: "cf-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/meta/llama-3.1-8b-instruct"}
+	req := &types.ChatCompletionRequest{
+		Model:    "@cf/meta/llama-3.1-8b-instruct",
+		Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+	}
+	_, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/meta/llama-3.1-8b-instruct", req, model)
+	if err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+
+	if gotAuth != "Bearer cf-key" {
+		t.Errorf("Authorization = %q, want Bearer cf-key", gotAuth)
+	}
+	if gotGateway != "" {
+		t.Errorf("cf-aig-gateway-id = %q, want absent when gateway_id unset", gotGateway)
+	}
+	if !strings.Contains(gotBody, `"model":"@cf/meta/llama-3.1-8b-instruct"`) {
+		t.Errorf("request body missing verbatim @cf model id: %s", gotBody)
+	}
+}
+
+func TestCloudflareChatCompletion_SetsGatewayHeader(t *testing.T) {
+	var gotGateway string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotGateway = r.Header.Get("cf-aig-gateway-id")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-2","object":"chat.completion","created":2,"model":"@cf/m","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{BaseURL: ts.URL, APIKey: "cf-key", GatewayID: "my-gw"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/m"}
+	req := &types.ChatCompletionRequest{
+		Model:    "@cf/m",
+		Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+	}
+	if _, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/m", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+	if gotGateway != "my-gw" {
+		t.Errorf("cf-aig-gateway-id = %q, want my-gw", gotGateway)
+	}
+}
+
+func TestCloudflareChatCompletion_InjectedAuthOmitsAuthorization(t *testing.T) {
+	var gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-3","object":"chat.completion","created":3,"model":"@cf/m","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{BaseURL: ts.URL, AuthMode: config.AuthModeInjected, APIKey: "ignored-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/m"}
+	req := &types.ChatCompletionRequest{Model: "@cf/m", Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}}}
+	if _, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/m", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want absent in injected mode even with keys configured", gotAuth)
+	}
+}
+
+func TestCloudflareChatCompletion_EmptyKeyOmitsAuthorization(t *testing.T) {
+	var gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-4","object":"chat.completion","created":4,"model":"@cf/m","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: ts.URL}}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/m"}
+	req := &types.ChatCompletionRequest{Model: "@cf/m", Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}}}
+	if _, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/m", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want absent when no key resolves (was dangling %q)", gotAuth, "Bearer ")
 	}
 }

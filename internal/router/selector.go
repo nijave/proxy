@@ -230,6 +230,7 @@ func enabledProviders(cfg *config.Config) map[string]bool {
 		"opencode-zen": cfg.OpenCodeZen.EffectiveAPIKeys(),
 		"aws-bedrock":  cfg.AWSBedrock.EffectiveAPIKeys(),
 		"openrouter":   cfg.OpenRouter.EffectiveAPIKeys(),
+		"cloudflare":   cfg.Cloudflare.EffectiveAPIKeys(),
 	}
 	for p, keys := range providerKeys {
 		if len(keys) > 0 || len(globalKeys) > 0 {

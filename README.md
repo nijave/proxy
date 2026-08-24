@@ -122,6 +122,7 @@ routatic-proxy --version          Show version
 |----------|-------------|
 | [docs/models.md](docs/models.md) | Model reference across all providers |
 | [docs/openrouter.md](docs/openrouter.md) | OpenRouter provider setup and configuration |
+| [docs/cloudflare.md](docs/cloudflare.md) | Cloudflare Workers AI provider setup and configuration |
 | [CONFIGURATION.md](CONFIGURATION.md) | Config file reference, env vars, model routing, fallback chains |
 | [MODELS.md](MODELS.md) | Complete model capabilities, costs, and routing recommendations |
 | [INSTALLATION.md](INSTALLATION.md) | Homebrew, Scoop, build from source, Docker |
