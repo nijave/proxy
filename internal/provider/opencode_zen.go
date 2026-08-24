@@ -18,6 +18,10 @@ import (
 	"github.com/routatic/proxy/pkg/types"
 )
 
+// upstreamUserAgent mirrors the opencode client User-Agent so Zen free-tier
+// rate limiting treats routatic-proxy traffic like the native client.
+const upstreamUserAgent = "opencode/routatic-proxy"
+
 // OpenCodeZenProvider implements core.Provider for the OpenCode Zen backend.
 // Zen supports four wire formats determined by model ID: Anthropic (Claude,
 // Qwen), Responses (GPT), Gemini, and Chat Completions (everything else).
@@ -68,8 +72,8 @@ func (p *OpenCodeZenProvider) ModelCapabilities(modelID string) (core.ProviderCa
 
 // WireFormat returns the wire format for the given model on Zen.
 // This replaces the old client.ClassifyEndpoint function.
-func (p *OpenCodeZenProvider) WireFormat(modelID string) core.WireFormat {
-	switch models.ClassifyEndpoint(modelID) {
+func (p *OpenCodeZenProvider) WireFormat(model config.ModelConfig) core.WireFormat {
+	switch models.ClassifyEndpoint(model.ModelID) {
 	case models.EndpointAnthropic:
 		return core.WireFormatAnthropic
 	case models.EndpointGemini:
@@ -102,7 +106,7 @@ func (p *OpenCodeZenProvider) StreamIdleTimeout(model config.ModelConfig) time.D
 
 // Execute sends a non-streaming request and returns the response.
 func (p *OpenCodeZenProvider) Execute(ctx context.Context, req *core.NormalizedRequest, model config.ModelConfig) (*core.ExecuteResult, error) {
-	switch p.WireFormat(model.ModelID) {
+	switch p.WireFormat(model) {
 	case core.WireFormatAnthropic:
 		return p.executeAnthropic(ctx, req, model)
 	case core.WireFormatOpenAIResponses:
@@ -116,7 +120,7 @@ func (p *OpenCodeZenProvider) Execute(ctx context.Context, req *core.NormalizedR
 
 // Stream sends a streaming request and returns an io.ReadCloser for SSE events.
 func (p *OpenCodeZenProvider) Stream(ctx context.Context, req *core.NormalizedRequest, model config.ModelConfig) (io.ReadCloser, error) {
-	switch p.WireFormat(model.ModelID) {
+	switch p.WireFormat(model) {
 	case core.WireFormatAnthropic:
 		return p.streamAnthropic(ctx, req, model)
 	case core.WireFormatOpenAIResponses:
@@ -206,6 +210,7 @@ func (p *OpenCodeZenProvider) executeAnthropic(ctx context.Context, req *core.No
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
 
 	start := time.Now()
@@ -249,6 +254,7 @@ func (p *OpenCodeZenProvider) streamAnthropic(ctx context.Context, req *core.Nor
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
@@ -394,6 +400,7 @@ func (p *OpenCodeZenProvider) doRequest(ctx context.Context, endpoint, apiKey st
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	if stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
@@ -424,6 +431,7 @@ func (p *OpenCodeZenProvider) doJSONRequest(ctx context.Context, endpoint, apiKe
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
