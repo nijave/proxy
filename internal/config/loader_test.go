@@ -1302,3 +1302,129 @@ func TestLoadJSON_ValidThinkingModesAccepted(t *testing.T) {
 		t.Fatalf("expected Load() to accept valid thinking_mode values, got: %v", err)
 	}
 }
+
+func TestEnvOverrides_CloudflareSpecificKey(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{
+		"api_key": "global-key",
+		"cloudflare": {
+			"account_id": "file-account"
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_CLOUDFLARE_API_KEY", "cf-env-key")
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_CLOUDFLARE_API_KEY")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Cloudflare.APIKey != "cf-env-key" {
+		t.Errorf("Cloudflare.APIKey = %q, want %q", cfg.Cloudflare.APIKey, "cf-env-key")
+	}
+	if cfg.Cloudflare.AccountID != "file-account" {
+		t.Errorf("Cloudflare.AccountID = %q, want %q", cfg.Cloudflare.AccountID, "file-account")
+	}
+	if got := cfg.Cloudflare.EffectiveBaseURL(); got != "https://api.cloudflare.com/client/v4/accounts/file-account/ai/v1/chat/completions" {
+		t.Errorf("Cloudflare.EffectiveBaseURL() composed incorrectly: %q", got)
+	}
+	if cfg.Cloudflare.BaseURL != "" {
+		t.Errorf("Cloudflare.BaseURL = %q, want empty (endpoint composes at request time from AccountID)", cfg.Cloudflare.BaseURL)
+	}
+}
+
+func TestCloudflareAuthModeLoading(t *testing.T) {
+	dir := t.TempDir()
+
+	writeCfg := func(t *testing.T, authMode string) string {
+		t.Helper()
+		cfgPath := filepath.Join(dir, "config-"+authMode+".json")
+		cfgJSON := `{
+			"api_key": "global-key",
+			"cloudflare": {
+				"base_url": "https://x.example.com/compat/chat/completions",
+				"auth_mode": ` + `"` + authMode + `"`
+		cfgJSON += `
+			}
+		}`
+		if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+			t.Fatalf("failed to write test config: %v", err)
+		}
+		return cfgPath
+	}
+
+	t.Run("bogus auth_mode rejected", func(t *testing.T) {
+		cfgPath := writeCfg(t, "bogus")
+		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+		defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() expected error for invalid cloudflare.auth_mode, got nil")
+		}
+		if !strings.Contains(err.Error(), "cloudflare.auth_mode") {
+			t.Errorf("error = %v, want mention of cloudflare.auth_mode", err)
+		}
+	})
+
+	t.Run("injected auth_mode accepted", func(t *testing.T) {
+		cfgPath := writeCfg(t, "injected")
+		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+		defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Cloudflare.AuthMode != "injected" {
+			t.Errorf("Cloudflare.AuthMode = %q, want %q", cfg.Cloudflare.AuthMode, "injected")
+		}
+	})
+}
+
+func TestEnvOverrides_CloudflareCommaSeparatedKeysAndAccountID(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	cfgJSON := `{
+		"api_key": "global-key",
+		"cloudflare": {}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+	_ = os.Setenv("ROUTATIC_PROXY_CLOUDFLARE_API_KEYS", "cf-key-1,cf-key-2")
+	_ = os.Setenv("ROUTATIC_PROXY_CLOUDFLARE_ACCOUNT_ID", "env-account")
+	defer func() {
+		_ = os.Unsetenv("ROUTATIC_PROXY_CONFIG")
+		_ = os.Unsetenv("ROUTATIC_PROXY_CLOUDFLARE_API_KEYS")
+		_ = os.Unsetenv("ROUTATIC_PROXY_CLOUDFLARE_ACCOUNT_ID")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if len(cfg.Cloudflare.APIKeys) != 2 || cfg.Cloudflare.APIKeys[0] != "cf-key-1" {
+		t.Errorf("Cloudflare.APIKeys = %v, want [cf-key-1 cf-key-2]", cfg.Cloudflare.APIKeys)
+	}
+	if cfg.Cloudflare.APIKey != "" {
+		t.Errorf("Cloudflare.APIKey = %q, want empty", cfg.Cloudflare.APIKey)
+	}
+	if cfg.Cloudflare.AccountID != "env-account" {
+		t.Errorf("Cloudflare.AccountID = %q, want %q", cfg.Cloudflare.AccountID, "env-account")
+	}
+}

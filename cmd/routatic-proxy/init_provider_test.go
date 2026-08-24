@@ -21,6 +21,11 @@ func TestInitCmd_ProviderFlag(t *testing.T) {
 			wantProvider: "openrouter",
 		},
 		{
+			name:         "cloudflare provider",
+			provider:     "cloudflare",
+			wantProvider: "cloudflare",
+		},
+		{
 			name:         "aws-bedrock provider",
 			provider:     "aws-bedrock",
 			wantProvider: "aws-bedrock",
@@ -207,7 +212,7 @@ func TestGetProviderConfig_UnknownProvider(t *testing.T) {
 }
 
 func TestGetProviderConfig_AllProviders(t *testing.T) {
-	providers := []string{"opencode-go", "opencode-zen", "aws-bedrock", "openrouter"}
+	providers := []string{"opencode-go", "opencode-zen", "aws-bedrock", "openrouter", "cloudflare"}
 
 	for _, provider := range providers {
 		t.Run(provider, func(t *testing.T) {
