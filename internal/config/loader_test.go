@@ -1343,6 +1343,55 @@ func TestEnvOverrides_CloudflareSpecificKey(t *testing.T) {
 	}
 }
 
+func TestCloudflareAuthModeLoading(t *testing.T) {
+	dir := t.TempDir()
+
+	writeCfg := func(t *testing.T, authMode string) string {
+		t.Helper()
+		cfgPath := filepath.Join(dir, "config-"+authMode+".json")
+		cfgJSON := `{
+			"api_key": "global-key",
+			"cloudflare": {
+				"base_url": "https://x.example.com/compat/chat/completions",
+				"auth_mode": ` + `"` + authMode + `"`
+		cfgJSON += `
+			}
+		}`
+		if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0644); err != nil {
+			t.Fatalf("failed to write test config: %v", err)
+		}
+		return cfgPath
+	}
+
+	t.Run("bogus auth_mode rejected", func(t *testing.T) {
+		cfgPath := writeCfg(t, "bogus")
+		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+		defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() expected error for invalid cloudflare.auth_mode, got nil")
+		}
+		if !strings.Contains(err.Error(), "cloudflare.auth_mode") {
+			t.Errorf("error = %v, want mention of cloudflare.auth_mode", err)
+		}
+	})
+
+	t.Run("injected auth_mode accepted", func(t *testing.T) {
+		cfgPath := writeCfg(t, "injected")
+		_ = os.Setenv("ROUTATIC_PROXY_CONFIG", cfgPath)
+		defer func() { _ = os.Unsetenv("ROUTATIC_PROXY_CONFIG") }()
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.Cloudflare.AuthMode != "injected" {
+			t.Errorf("Cloudflare.AuthMode = %q, want %q", cfg.Cloudflare.AuthMode, "injected")
+		}
+	})
+}
+
 func TestEnvOverrides_CloudflareCommaSeparatedKeysAndAccountID(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

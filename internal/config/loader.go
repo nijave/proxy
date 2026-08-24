@@ -382,6 +382,11 @@ func validate(cfg *Config) error {
 	if len(cfg.Cloudflare.EffectiveAPIKeys()) > 0 && cfg.Cloudflare.AccountID == "" && cfg.Cloudflare.BaseURL == "" {
 		return fmt.Errorf("cloudflare.account_id is required when cloudflare API keys are configured (or set cloudflare.base_url directly)")
 	}
+	switch cfg.Cloudflare.AuthMode {
+	case "", AuthModeBearer, AuthModeInjected:
+	default:
+		return fmt.Errorf("cloudflare.auth_mode must be %q or %q", AuthModeBearer, AuthModeInjected)
+	}
 
 	if err := validateModelOverrides(cfg.ModelOverrides); err != nil {
 		return err

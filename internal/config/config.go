@@ -213,6 +213,15 @@ func (c *OpenRouterConfig) EffectiveAPIKeys() []string {
 	return nil
 }
 
+const (
+	// AuthModeBearer is the default authentication mode: an Authorization
+	// Bearer header is sent whenever a key resolves.
+	AuthModeBearer = "bearer"
+	// AuthModeInjected omits the Authorization header entirely; identity is
+	// injected at the edge (e.g. Cloudflare One / Access on a custom domain).
+	AuthModeInjected = "injected"
+)
+
 // CloudflareConfig holds the upstream Cloudflare Workers AI settings. Requests
 // go to the OpenAI-compatible chat completions endpoint built from AccountID,
 // unless BaseURL overrides it. GatewayID optionally adds the cf-aig-gateway-id
@@ -222,6 +231,7 @@ type CloudflareConfig struct {
 	AccountID          string   `json:"account_id"`
 	BaseURL            string   `json:"base_url,omitempty"`
 	GatewayID          string   `json:"gateway_id,omitempty"`
+	AuthMode           string   `json:"auth_mode,omitempty"`
 	APIKey             string   `json:"api_key,omitempty"`
 	APIKeys            []string `json:"api_keys,omitempty"`
 	TimeoutMs          int      `json:"timeout_ms"`

@@ -144,6 +144,22 @@ Set `gateway_id` to route requests through [AI Gateway](https://developers.cloud
 
 Request logs, cache hit rates, and cost analytics appear in the Cloudflare dashboard under **AI Gateway**, where you can inspect every proxied request.
 
+## Credential-less authentication (edge-injected)
+
+When your gateway custom domain sits behind Cloudflare One / Access with
+identity injected at the edge, the proxy must send no credentials at all:
+
+```json
+"cloudflare": {
+  "base_url": "https://<access-protected-custom-domain>/compat/chat/completions",
+  "auth_mode": "injected"
+}
+```
+
+In `injected` mode no `Authorization` header is sent; any configured keys are
+ignored. Omitting keys without `auth_mode` also omits the header (previously a
+dangling `Bearer ` was sent). Default `auth_mode` is `bearer`.
+
 ## Fallback Chains
 
 Cloudflare mixes cleanly with other providers in fallback chains — keep a fast Workers AI model primary and fall back to OpenCode Go when it fails:

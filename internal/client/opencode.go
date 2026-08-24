@@ -414,7 +414,7 @@ func (c *OpenCodeClient) getEndpoint(modelID string, modelConfig config.ModelCon
 
 	if IsCloudflare(modelConfig) {
 		cf := cfg.Cloudflare
-		return endpointConfig{BaseURL: cf.EffectiveBaseURL(), APIKey: apiKey, GatewayID: cf.GatewayID}
+		return endpointConfig{BaseURL: cf.EffectiveBaseURL(), APIKey: apiKey, GatewayID: cf.GatewayID, SkipAuth: cf.AuthMode == config.AuthModeInjected}
 	}
 
 	// Default: OpenCode Go
@@ -429,6 +429,7 @@ type endpointConfig struct {
 	BaseURL   string
 	APIKey    string
 	GatewayID string // optional cf-aig-gateway-id (Cloudflare AI Gateway)
+	SkipAuth  bool   // omit Authorization entirely (edge-injected identity)
 }
 
 // ChatCompletion sends a chat completion request.
@@ -459,7 +460,10 @@ func (c *OpenCodeClient) ChatCompletion(
 	// Anthropic endpoint uses x-api-key; OpenAI endpoint uses Bearer
 	if models.IsAnthropicModel(modelID) {
 		httpReq.Header.Set("x-api-key", endpoint.APIKey)
-	} else {
+	} else if endpoint.SkipAuth {
+		// Credential-less mode: identity is injected at the edge
+		// (e.g. Cloudflare One / Access on a custom domain).
+	} else if endpoint.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+endpoint.APIKey)
 	}
 

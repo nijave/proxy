@@ -2,6 +2,16 @@ package config
 
 import "testing"
 
+func TestCloudflareValidateAuthMode(t *testing.T) {
+	valid := CloudflareConfig{BaseURL: "https://ai-gw.example.com/compat/chat/completions", AuthMode: AuthModeInjected}
+	if valid.EffectiveAPIKeys() != nil {
+		t.Errorf("injected mode should not require keys")
+	}
+	if !(AuthModeBearer == "bearer") || !(AuthModeInjected == "injected") {
+		t.Errorf("unexpected constant values")
+	}
+}
+
 func TestCloudflareEffectiveAPIKeys(t *testing.T) {
 	tests := []struct {
 		name string

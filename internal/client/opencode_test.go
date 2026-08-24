@@ -1165,3 +1165,51 @@ func TestCloudflareChatCompletion_SetsGatewayHeader(t *testing.T) {
 		t.Errorf("cf-aig-gateway-id = %q, want my-gw", gotGateway)
 	}
 }
+
+func TestCloudflareChatCompletion_InjectedAuthOmitsAuthorization(t *testing.T) {
+	var gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-3","object":"chat.completion","created":3,"model":"@cf/m","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Cloudflare: config.CloudflareConfig{BaseURL: ts.URL, AuthMode: config.AuthModeInjected, APIKey: "ignored-key"},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/m"}
+	req := &types.ChatCompletionRequest{Model: "@cf/m", Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}}}
+	if _, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/m", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want absent in injected mode even with keys configured", gotAuth)
+	}
+}
+
+func TestCloudflareChatCompletion_EmptyKeyOmitsAuthorization(t *testing.T) {
+	var gotAuth string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cf-4","object":"chat.completion","created":4,"model":"@cf/m","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: ts.URL}}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderCloudflare, ModelID: "@cf/m"}
+	req := &types.ChatCompletionRequest{Model: "@cf/m", Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}}}
+	if _, err := c.ChatCompletionNonStreaming(context.Background(), "@cf/m", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization = %q, want absent when no key resolves (was dangling %q)", gotAuth, "Bearer ")
+	}
+}
