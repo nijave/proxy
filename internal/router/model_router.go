@@ -127,7 +127,7 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 
 		cat, _ := r.catalog(context.Background())
 		if cat != nil {
-			if catalogPrimary, catalogOk := r.resolveFromCatalog(cat, requestedModel, sel); catalogOk {
+			if catalogPrimary, catalogOk := r.resolveFromCatalog(cfg, cat, requestedModel, sel); catalogOk {
 				primary = catalogPrimary
 			} else if providerQualified {
 				return RouteResult{}, false, fmt.Errorf("model reference %q uses unknown provider %q: %w", requestedModel, sel.Provider, ErrUnknownProvider)
@@ -157,16 +157,36 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 
 // resolvedModelToConfig converts a catalog resolved model into a runtime
 // ModelConfig used by the router.
-func resolvedModelToConfig(resolved catalog.ResolvedModel) config.ModelConfig {
+func resolvedModelToConfig(cfg *config.Config, resolved catalog.ResolvedModel) config.ModelConfig {
 	supportsTools := resolved.Tools
+	modelID := resolved.ModelID
+	if resolved.Provider == config.ProviderCloudflare {
+		modelID = cloudflareCompatModelID(cfg, modelID)
+	}
 	return config.ModelConfig{
 		Provider:      resolved.Provider,
-		ModelID:       resolved.ModelID,
+		ModelID:       modelID,
 		ModelRef:      resolved.CanonicalName,
 		Vision:        resolved.Vision,
 		ContextWindow: int(resolved.ContextWindow),
 		SupportsTools: &supportsTools,
 	}
+}
+
+// cloudflareCompatModelID prefixes modelID with "workers-ai/" when the configured
+// Cloudflare endpoint is not Cloudflare's own Workers AI API. Catalog entries store
+// the bare Workers AI id, but a custom base_url — typically an AI Gateway
+// universal/compat route — requires the provider slug embedded in the model string.
+// Idempotent: a modelID that already carries the prefix is returned unchanged.
+func cloudflareCompatModelID(cfg *config.Config, modelID string) string {
+	baseURL := cfg.Cloudflare.EffectiveBaseURL()
+	if baseURL == "" || strings.HasPrefix(baseURL, "https://api.cloudflare.com") {
+		return modelID
+	}
+	if strings.HasPrefix(modelID, "workers-ai/") {
+		return modelID
+	}
+	return "workers-ai/" + modelID
 }
 
 // requestConstraints maps request-level requirements to scenario constraints
@@ -209,7 +229,7 @@ func hasToolUsage(messages []MessageContent) bool {
 
 // resolveFromCatalog attempts to resolve a requested model string through the
 // catalog. It returns the model config and true on success, otherwise false.
-func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedModel string, sel catalog.Selector) (config.ModelConfig, bool) {
+func (r *ModelRouter) resolveFromCatalog(cfg *config.Config, cat *catalog.IndexedCatalog, requestedModel string, sel catalog.Selector) (config.ModelConfig, bool) {
 	var resolved catalog.ResolvedModel
 	var err error
 	if sel.Provider != "" {
@@ -221,9 +241,9 @@ func (r *ModelRouter) resolveFromCatalog(cat *catalog.IndexedCatalog, requestedM
 		return config.ModelConfig{}, false
 	}
 
-	cfg := resolvedModelToConfig(resolved)
-	cfg.ModelRef = requestedModel
-	return cfg, true
+	mc := resolvedModelToConfig(cfg, resolved)
+	mc.ModelRef = requestedModel
+	return mc, true
 }
 
 // legacyUnknownModelConfig builds a bare config for an unknown model and
@@ -265,7 +285,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 		constraints := requestConstraints(messages, tokenCount)
 		selector := NewSelector(cat, cfg)
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
-			primary = resolvedModelToConfig(resolved)
+			primary = resolvedModelToConfig(cfg, resolved)
 			ok = true
 			trigger += ", cheapest catalog model"
 		}
@@ -491,7 +511,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 		constraints := requestConstraints(messages, tokenCount)
 		selector := NewSelector(cat, cfg)
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
-			primary = resolvedModelToConfig(resolved)
+			primary = resolvedModelToConfig(cfg, resolved)
 			ok = true
 			trigger += ", cheapest catalog model"
 		}

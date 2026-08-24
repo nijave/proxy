@@ -160,6 +160,18 @@ In `injected` mode no `Authorization` header is sent; any configured keys are
 ignored. Omitting keys without `auth_mode` also omits the header (previously a
 dangling `Bearer ` was sent). Default `auth_mode` is `bearer`.
 
+## Automatic `workers-ai/` prefixing (catalog-resolved models)
+
+Catalog entries store the bare Workers AI id (`@cf/meta/llama-3.1-8b-instruct-fast`).
+That id is correct for Cloudflare's own API, but an AI Gateway universal/`compat`
+route rejects it (`AiGatewayError` 2008, "Invalid provider") — the gateway needs the
+provider slug inside the model string. When `cloudflare.base_url` points anywhere
+other than `https://api.cloudflare.com/...`, the proxy prefixes catalog-resolved
+model ids with `workers-ai/` at dispatch time
+(`workers-ai/@cf/meta/llama-3.1-8b-instruct-fast`). The prefix is idempotent and
+applies only to models resolved from the catalog — hand-written `models{}`,
+`model_overrides`, or `model_family_overrides` entries are sent exactly as authored.
+
 ## Fallback Chains
 
 Cloudflare mixes cleanly with other providers in fallback chains — keep a fast Workers AI model primary and fall back to OpenCode Go when it fails:

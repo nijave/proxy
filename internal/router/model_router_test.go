@@ -1219,3 +1219,259 @@ func TestRouteWithOverride_ReasonReportsOverrideModel(t *testing.T) {
 		t.Errorf("expected reason to name the override model, got: %s", result.Reason)
 	}
 }
+
+// TestResolvedModelToConfig_CloudflareCompatModelID covers the "workers-ai/"
+// prefix applied when a catalog-resolved Cloudflare model is dispatched against
+// a custom (AI Gateway universal/compat) base_url.
+func TestResolvedModelToConfig_CloudflareCompatModelID(t *testing.T) {
+	const bareID = "@cf/meta/llama-3.1-8b-instruct-fast"
+	tests := []struct {
+		name        string
+		cfg         *config.Config
+		provider    string
+		modelID     string
+		wantModelID string
+	}{
+		{
+			name:        "custom gateway base_url prefixes bare workers-ai id",
+			cfg:         &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: "https://llm-gateway.example.com/compat/chat/completions"}},
+			provider:    config.ProviderCloudflare,
+			modelID:     bareID,
+			wantModelID: "workers-ai/" + bareID,
+		},
+		{
+			name:        "native api.cloudflare.com base_url leaves id unchanged",
+			cfg:         &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: "https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1/chat/completions"}},
+			provider:    config.ProviderCloudflare,
+			modelID:     bareID,
+			wantModelID: bareID,
+		},
+		{
+			name:        "account-only config composes native url and leaves id unchanged",
+			cfg:         &config.Config{Cloudflare: config.CloudflareConfig{AccountID: "acct123"}},
+			provider:    config.ProviderCloudflare,
+			modelID:     bareID,
+			wantModelID: bareID,
+		},
+		{
+			name:        "already-prefixed id is not double-prefixed",
+			cfg:         &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: "https://llm-gateway.example.com/compat/chat/completions"}},
+			provider:    config.ProviderCloudflare,
+			modelID:     "workers-ai/" + bareID,
+			wantModelID: "workers-ai/" + bareID,
+		},
+		{
+			name:        "non-cloudflare provider is never rewritten",
+			cfg:         &config.Config{Cloudflare: config.CloudflareConfig{BaseURL: "https://llm-gateway.example.com/compat/chat/completions"}},
+			provider:    "opencode-go",
+			modelID:     "deepseek-v4-flash",
+			wantModelID: "deepseek-v4-flash",
+		},
+		{
+			name:        "unset cloudflare config leaves id unchanged",
+			cfg:         &config.Config{},
+			provider:    config.ProviderCloudflare,
+			modelID:     bareID,
+			wantModelID: bareID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolvedModelToConfig(tt.cfg, catalog.ResolvedModel{
+				Provider: tt.provider,
+				ModelID:  tt.modelID,
+			})
+			if got.ModelID != tt.wantModelID {
+				t.Errorf("expected model_id %q, got %q", tt.wantModelID, got.ModelID)
+			}
+			if got.Provider != tt.provider {
+				t.Errorf("expected provider %q, got %q", tt.provider, got.Provider)
+			}
+		})
+	}
+}
+
+// writeCloudflareTestCatalog writes a catalog fixture containing only a
+// cloudflare provider with a single Workers AI model. Local to the
+// compat-prefix tests so the shared writeTestCatalog fixture stays stable.
+func writeCloudflareTestCatalog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	data := []byte(`{
+  "providers": {
+    "cloudflare": {
+      "name": "cloudflare",
+      "base_url": "https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1/chat/completions",
+      "api_key": "",
+      "enabled": true,
+      "anthropic_tools_disabled": false
+    }
+  },
+  "models": {
+    "cloudflare/@cf/meta/llama-3.1-8b-instruct-fast": {
+      "id": "cloudflare/@cf/meta/llama-3.1-8b-instruct-fast",
+      "name": "Llama 3.1 8B Instruct Fast",
+      "limit": {"context": 128000},
+      "rates": {"input": 0.0, "output": 0.0},
+      "tool_call": true,
+      "modalities": {"input": ["text"], "output": ["text"]}
+    }
+  }
+}`)
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("failed to write test catalog: %v", err)
+	}
+	return path
+}
+
+// TestRoute_CloudflareCatalogRef_CompatPrefix exercises the full
+// respect_requested_model catalog-fallback path: a provider-qualified Workers AI
+// reference resolves through the catalog and gets the "workers-ai/" slug baked
+// in when cloudflare.base_url points at an AI Gateway compat route.
+func TestRoute_CloudflareCatalogRef_CompatPrefix(t *testing.T) {
+	catalogPath := writeCloudflareTestCatalog(t)
+	cfg := &config.Config{
+		RespectRequestedModel: boolPtr(true),
+		Cloudflare: config.CloudflareConfig{
+			BaseURL: "https://llm-gateway.example.com/compat/chat/completions",
+		},
+		Models: map[string]config.ModelConfig{
+			"default": {Provider: "opencode-go", ModelID: "kimi-k2.6"},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {{Provider: "opencode-go", ModelID: "qwen3.5-plus"}},
+		},
+	}
+	atomic := newTestAtomicConfig(cfg)
+	router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+	result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "@cf/meta/llama-3.1-8b-instruct-fast@cloudflare")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Primary.Provider != "cloudflare" {
+		t.Errorf("expected provider cloudflare, got %q", result.Primary.Provider)
+	}
+	if result.Primary.ModelID != "workers-ai/@cf/meta/llama-3.1-8b-instruct-fast" {
+		t.Errorf("expected prefixed model_id workers-ai/@cf/meta/llama-3.1-8b-instruct-fast, got %q", result.Primary.ModelID)
+	}
+}
+
+// writeCloudflareCostTestCatalog writes a cost-routing fixture where the cheap
+// cloudflare model beats an expensive opencode-go candidate for the default
+// scenario. Local to the compat-prefix test so shared fixtures stay stable.
+func writeCloudflareCostTestCatalog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.json")
+	data := []byte(`{
+  "providers": {
+    "cloudflare": {
+      "name": "cloudflare",
+      "base_url": "https://api.cloudflare.com/client/v4/accounts/acct123/ai/v1/chat/completions",
+      "api_key": "",
+      "enabled": true
+    },
+    "opencode-go": {
+      "name": "opencode-go",
+      "base_url": "https://go.opencode.ai/v1",
+      "api_key": "go-key",
+      "enabled": true
+    }
+  },
+  "models": {
+    "cloudflare/@cf/meta/llama-3.1-8b-instruct-fast": {
+      "id": "cloudflare/@cf/meta/llama-3.1-8b-instruct-fast",
+      "name": "Llama 3.1 8B Instruct Fast",
+      "reasoning": false,
+      "tool_call": true,
+      "modalities": {"input": ["text"], "output": ["text"]},
+      "limit": {"context": 128000, "output": 4096},
+      "rates": {"input": 0.1, "output": 0.2}
+    },
+    "opencode-go/expensive-model": {
+      "id": "opencode-go/expensive-model",
+      "name": "Expensive Model",
+      "reasoning": false,
+      "tool_call": true,
+      "modalities": {"input": ["text"], "output": ["text"]},
+      "limit": {"context": 128000, "output": 4096},
+      "rates": {"input": 5.0, "output": 9.0}
+    }
+  },
+  "scenarios": {
+    "default": {
+      "name": "default",
+      "description": "Default scenario with no special requirements",
+      "min_context_window": 0
+    }
+  }
+}`)
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("failed to write test catalog: %v", err)
+	}
+	return path
+}
+
+// TestCostBasedRouting_SelectsCheapest_CloudflareCompatPrefix proves the
+// "workers-ai/" prefix also applies when a Cloudflare model wins cost-based
+// selection, not just on the respect_requested_model catalog path.
+func TestCostBasedRouting_SelectsCheapest_CloudflareCompatPrefix(t *testing.T) {
+	catalogPath := writeCloudflareCostTestCatalog(t)
+
+	t.Run("custom gateway base_url prefixes the winning model", func(t *testing.T) {
+		cfg := &config.Config{
+			APIKey:                 "global-key",
+			EnableCostBasedRouting: true,
+			Cloudflare: config.CloudflareConfig{
+				BaseURL: "https://llm-gateway.example.com/compat/chat/completions",
+			},
+			Models: map[string]config.ModelConfig{
+				"default": {Provider: "opencode-go", ModelID: "legacy-default"},
+			},
+		}
+		atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+		router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+		result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "")
+		if err != nil {
+			t.Fatalf("Route failed: %v", err)
+		}
+		if result.Primary.Provider != "cloudflare" {
+			t.Errorf("expected provider cloudflare, got %q", result.Primary.Provider)
+		}
+		if result.Primary.ModelID != "workers-ai/@cf/meta/llama-3.1-8b-instruct-fast" {
+			t.Errorf("expected prefixed model_id workers-ai/@cf/meta/llama-3.1-8b-instruct-fast, got %q", result.Primary.ModelID)
+		}
+	})
+
+	t.Run("native base_url leaves the winning model bare", func(t *testing.T) {
+		cfg := &config.Config{
+			APIKey:                 "global-key",
+			EnableCostBasedRouting: true,
+			Cloudflare: config.CloudflareConfig{
+				AccountID: "acct123",
+			},
+			Models: map[string]config.ModelConfig{
+				"default": {Provider: "opencode-go", ModelID: "legacy-default"},
+			},
+		}
+		atomic := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+		router := NewModelRouterWithCatalog(atomic, catalogPath)
+
+		result, err := router.Route([]MessageContent{{Role: "user", Content: "Hello"}}, 100, "")
+		if err != nil {
+			t.Fatalf("Route failed: %v", err)
+		}
+		if result.Primary.Provider != "cloudflare" {
+			t.Errorf("expected provider cloudflare, got %q", result.Primary.Provider)
+		}
+		if result.Primary.ModelID != "@cf/meta/llama-3.1-8b-instruct-fast" {
+			t.Errorf("expected bare model_id @cf/meta/llama-3.1-8b-instruct-fast, got %q", result.Primary.ModelID)
+		}
+	})
+}
