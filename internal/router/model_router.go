@@ -77,10 +77,30 @@ func isRespectRequestedModel(cfg *config.Config) bool {
 }
 
 // RouteResult contains the selected model and fallback chain.
+//
+// Reason is the human-readable routing explanation used by logs and the
+// dry-run/debug paths. It combines the scenario trigger (why this scenario
+// matched) with the model that was actually resolved for it — always read from
+// config or the catalog, never a hardcoded name, so it cannot drift.
 type RouteResult struct {
 	Primary   config.ModelConfig
 	Fallbacks []config.ModelConfig
 	Scenario  Scenario
+	Reason    string
+}
+
+// describeRouting pairs a scenario trigger with the model resolved for it.
+// The model ID is always sourced from the resolved ModelConfig (config or
+// catalog), which is what makes the reason self-updating.
+func describeRouting(trigger string, primary config.ModelConfig) string {
+	modelID := primary.ModelID
+	if modelID == "" {
+		modelID = "(unresolved)"
+	}
+	if trigger == "" {
+		return fmt.Sprintf("resolved model %s", modelID)
+	}
+	return fmt.Sprintf("%s -> resolved model %s", trigger, modelID)
 }
 
 // resolveRequestedModel checks if the user-specified model should override
@@ -93,6 +113,10 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 
 	// Look up the requested model in config to inherit its settings
 	primary, ok := cfg.Models[requestedModel]
+	canonicalRequestedModel := config.CanonicalModelID(requestedModel)
+	if !ok && canonicalRequestedModel != requestedModel {
+		primary, ok = cfg.Models[canonicalRequestedModel]
+	}
 	if !ok {
 		// Not in legacy config — try the catalog before falling back to the
 		// legacy unknown-model behavior. Provider-qualified references that
@@ -108,12 +132,12 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 			} else if providerQualified {
 				return RouteResult{}, false, fmt.Errorf("model reference %q uses unknown provider %q: %w", requestedModel, sel.Provider, ErrUnknownProvider)
 			} else {
-				primary = r.legacyUnknownModelConfig(cfg, requestedModel)
+				primary = r.legacyUnknownModelConfig(cfg, canonicalRequestedModel)
 			}
 		} else if providerQualified {
 			return RouteResult{}, false, fmt.Errorf("model reference %q uses unknown provider %q: %w", requestedModel, sel.Provider, ErrUnknownProvider)
 		} else {
-			primary = r.legacyUnknownModelConfig(cfg, requestedModel)
+			primary = r.legacyUnknownModelConfig(cfg, canonicalRequestedModel)
 		}
 	}
 	primary = config.ResolveModelConfig(primary)
@@ -127,6 +151,7 @@ func (r *ModelRouter) resolveRequestedModel(cfg *config.Config, requestedModel s
 		Primary:   primary,
 		Fallbacks: fallbacks,
 		Scenario:  ScenarioDefault,
+		Reason:    describeRouting(fmt.Sprintf("respect_requested_model honored request for %q", requestedModel), primary),
 	}, true, nil
 }
 
@@ -230,6 +255,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 	// Otherwise, use scenario-based routing
 	result := DetectScenario(messages, tokenCount, cfg)
 	scenarioKey := string(result.Scenario)
+	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)
 
 	// Get primary model for scenario. When cost-based routing is enabled and
 	// a non-empty catalog is available, prefer the cheapest matching catalog
@@ -241,6 +267,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
 			primary = resolvedModelToConfig(resolved)
 			ok = true
+			trigger += ", cheapest catalog model"
 		}
 	}
 
@@ -253,6 +280,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 		if !ok {
 			return RouteResult{}, fmt.Errorf("no default model configured")
 		}
+		trigger += ", scenario not configured so using \"default\" model"
 	}
 
 	// Get fallbacks for scenario
@@ -269,6 +297,7 @@ func (r *ModelRouter) Route(messages []MessageContent, tokenCount int, requested
 		Primary:   primary,
 		Fallbacks: fallbacks,
 		Scenario:  result.Scenario,
+		Reason:    describeRouting(trigger, primary),
 	}, nil
 }
 
@@ -354,6 +383,7 @@ func buildOverrideResult(cfg *config.Config, override config.ModelConfig, fallba
 		Primary:   override,
 		Fallbacks: fallbacks,
 		Scenario:  ScenarioOverride,
+		Reason:    describeRouting(fmt.Sprintf("matched configured override key %q", fallbackKey), override),
 	}
 }
 
@@ -451,6 +481,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 	// Otherwise, use scenario-based routing for streaming
 	result := RouteForStreaming(messages, tokenCount, cfg)
 	scenarioKey := string(result.Scenario)
+	trigger := fmt.Sprintf("scenario=%s (%s)", result.Scenario, result.Reason)
 
 	// Get primary model for scenario. When cost-based routing is enabled and
 	// a non-empty catalog is available, prefer the cheapest matching catalog
@@ -462,6 +493,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 		if resolved, err := selector.SelectCheapest(scenarioKey, constraints); err == nil {
 			primary = resolvedModelToConfig(resolved)
 			ok = true
+			trigger += ", cheapest catalog model"
 		}
 	}
 	if !ok {
@@ -473,6 +505,9 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 		if !ok {
 			// Fall back to default
 			primary = cfg.Models["default"]
+			trigger += ", scenario and \"fast\" not configured so using \"default\" model"
+		} else {
+			trigger += ", scenario not configured so using \"fast\" model"
 		}
 	}
 	if primary.ModelID == "" {
@@ -494,6 +529,7 @@ func (r *ModelRouter) RouteForStreaming(messages []MessageContent, tokenCount in
 		Primary:   primary,
 		Fallbacks: fallbacks,
 		Scenario:  result.Scenario,
+		Reason:    describeRouting(trigger, primary),
 	}, nil
 }
 

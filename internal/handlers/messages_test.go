@@ -431,7 +431,7 @@ func (p *usageLimitStreamProvider) Capabilities() core.ProviderCapabilities {
 func (p *usageLimitStreamProvider) ModelCapabilities(string) (core.ProviderCapabilities, bool) {
 	return p.Capabilities(), true
 }
-func (p *usageLimitStreamProvider) WireFormat(string) core.WireFormat {
+func (p *usageLimitStreamProvider) WireFormat(config.ModelConfig) core.WireFormat {
 	return core.WireFormatAnthropic
 }
 func (p *usageLimitStreamProvider) Execute(context.Context, *core.NormalizedRequest, config.ModelConfig) (*core.ExecuteResult, error) {
@@ -2456,7 +2456,7 @@ func (p *chunkedAnthropicProvider) Capabilities() core.ProviderCapabilities {
 func (p *chunkedAnthropicProvider) ModelCapabilities(string) (core.ProviderCapabilities, bool) {
 	return p.Capabilities(), true
 }
-func (p *chunkedAnthropicProvider) WireFormat(string) core.WireFormat {
+func (p *chunkedAnthropicProvider) WireFormat(config.ModelConfig) core.WireFormat {
 	return core.WireFormatAnthropic
 }
 func (p *chunkedAnthropicProvider) Execute(context.Context, *core.NormalizedRequest, config.ModelConfig) (*core.ExecuteResult, error) {

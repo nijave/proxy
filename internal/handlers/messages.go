@@ -603,6 +603,7 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 		"model", routeResult.Primary.ModelID,
 		"provider", routeResult.Primary.Provider,
 		"tokens", tokenCount,
+		"reason", routeResult.Reason,
 	)
 
 	normalizedReq := core.NormalizeRequest(&anthropicReq)
@@ -913,7 +914,7 @@ func (h *MessagesHandler) handleStreaming(
 				// Bind body read to attemptCtx so streaming_timeout_ms aborts mid-stream.
 				streamReader := transformer.NewCtxReadCloser(attemptCtx, streamBody)
 
-				wireFormat := prov.WireFormat(model.ModelID)
+				wireFormat := prov.WireFormat(model)
 				if wireFormat == core.WireFormatAnthropic {
 					atomic.StoreInt32(&heartbeatPaused, 1)
 				}
