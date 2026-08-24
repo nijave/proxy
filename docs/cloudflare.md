@@ -65,7 +65,7 @@ Or add the `cloudflare` block and models to your `~/.config/routatic-proxy/confi
   "models": {
     "cf-default": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 8192
     }
@@ -97,7 +97,7 @@ Precedence order: `*_API_KEYS` → `*_API_KEY` → config file values. Environme
 Workers AI model IDs include the task prefix (`@cf/`, `@hf/`, ...) and are used verbatim as `model_id`. There is no extra prefixing on top:
 
 ```json
-{ "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+{ "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
 ```
 
 Discover available IDs via the models list API or the model catalog pages:
@@ -115,7 +115,7 @@ cloudflare/@cf/meta/llama-3.1-8b-instruct
 
 Catalog refs use the same shape, e.g. `@cf/meta/llama@cloudflare`.
 
-> **Note:** parsing keys with multiple `/` segments requires the catalog parser fix from PR #1. Older builds may mis-resolve deeply nested model names like `cloudflare/@cf/moonshotai/kimi-k2.6`.
+> **Note:** parsing keys with multiple `/` segments requires the catalog parser fix from PR #1. Older builds may mis-resolve deeply nested model names like `cloudflare/@cf/meta/llama-3.1-8b-instruct-fast`.
 
 ## Thinking Mode Guidance
 
@@ -152,7 +152,7 @@ Cloudflare mixes cleanly with other providers in fallback chains — keep a fast
 {
   "fallbacks": {
     "default": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8" },
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" },
       { "provider": "opencode-go", "model_id": "kimi-k2.6" },
       { "provider": "opencode-go", "model_id": "qwen3.7-plus" }
     ]

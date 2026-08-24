@@ -398,38 +398,38 @@ func getCloudflareConfig() string {
   "models": {
     "default": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 8192
     },
     "background": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.1-8b-instruct",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.5,
       "max_tokens": 2048
     },
     "think": {
       "provider": "cloudflare",
-      "model_id": "@cf/moonshotai/kimi-k2.6",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 8192
     },
     "complex": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 8192
     },
     "long_context": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 16384,
       "context_threshold": 80000
     },
     "fast": {
       "provider": "cloudflare",
-      "model_id": "@cf/meta/llama-3.1-8b-instruct",
+      "model_id": "@cf/meta/llama-3.1-8b-instruct-fast",
       "temperature": 0.7,
       "max_tokens": 4096
     }
@@ -437,22 +437,22 @@ func getCloudflareConfig() string {
 
   "fallbacks": {
     "default": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ],
     "background": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ],
     "think": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ],
     "complex": [
-      { "provider": "cloudflare", "model_id": "@cf/moonshotai/kimi-k2.6" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ],
     "long_context": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.3-70b-instruct-fp8" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ],
     "fast": [
-      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct" }
+      { "provider": "cloudflare", "model_id": "@cf/meta/llama-3.1-8b-instruct-fast" }
     ]
   },
 
