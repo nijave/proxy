@@ -16,6 +16,12 @@ type Provider struct {
 	APIKey                 string `json:"api_key"`
 	Enabled                *bool  `json:"enabled,omitempty"`
 	AnthropicToolsDisabled bool   `json:"anthropic_tools_disabled"`
+
+	// Models holds the provider's own catalog, keyed by model id. models.dev
+	// stores reseller/gateway providers' models here (providers[<id>].models)
+	// rather than in the top-level Models map, so this must be ingested for
+	// those providers' models to be resolvable. See ingestProviderModels.
+	Models map[string]Model `json:"models,omitempty"`
 }
 
 // Modalities describes the input/output formats a model supports.

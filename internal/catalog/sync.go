@@ -76,6 +76,8 @@ func Sync(sourceURL, destDir string) (*Lock, error) {
 		return nil, fmt.Errorf("parse catalog contents: %w", err)
 	}
 
+	catalog.ingestProviderModels()
+
 	idx, err := BuildProviderIndex(catalog)
 	if err != nil {
 		return nil, fmt.Errorf("build provider index: %w", err)
