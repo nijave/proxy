@@ -1442,6 +1442,399 @@ func TestEmitMessageResponse_ThinkingSignatureOnlyInDelta(t *testing.T) {
 	}
 }
 
+// --- ProxyResponsesStream: OpenAI Responses SSE → Anthropic SSE ---
+
+// eventsOfType returns the indices of events matching t.
+func eventsOfType(events []types.MessageEvent, typ string) []int {
+	var idxs []int
+	for i, ev := range events {
+		if ev.Type == typ {
+			idxs = append(idxs, i)
+		}
+	}
+	return idxs
+}
+
+// contentBlockStopIndices returns the block indices of all content_block_stop
+// events, in emission order.
+func contentBlockStopIndices(events []types.MessageEvent) []int {
+	var idxs []int
+	for _, ev := range events {
+		if ev.Type == "content_block_stop" && ev.Index != nil {
+			idxs = append(idxs, *ev.Index)
+		}
+	}
+	return idxs
+}
+
+// concatenatedPartialJSON joins all input_json_delta partial_json fragments
+// targeted at the given content block index.
+func concatenatedPartialJSON(events []types.MessageEvent, blockIdx int) string {
+	var b strings.Builder
+	for _, ev := range events {
+		if ev.Type == "content_block_delta" && ev.Index != nil && *ev.Index == blockIdx &&
+			ev.Delta != nil && ev.Delta.Type == "input_json_delta" {
+			b.WriteString(ev.Delta.PartialJSON)
+		}
+	}
+	return b.String()
+}
+
+// TestProxyResponsesStream_ToolOnlyStream reproduces a grok-4.6 tool-call
+// capture (reasoning summary + function_call, no text) and verifies the tool
+// call reaches the client as a tool_use block with reconstructed arguments.
+func TestProxyResponsesStream_ToolOnlyStream(t *testing.T) {
+	handler := NewStreamHandler()
+	w := newMockResponseWriter()
+	body := sseLines(
+		`{"type":"response.created","sequence_number":0,"response":{"id":"c831","status":"in_progress","usage":null}}`,
+		`{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"in_progress","summary":[]}}`,
+		`{"type":"response.reasoning_summary_text.delta","sequence_number":4,"output_index":0,"summary_index":0,"item_id":"rs_1","delta":"The user asked"}`,
+		`{"type":"response.output_item.done","sequence_number":19,"output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"The user asked"}]}}`,
+		`{"type":"response.output_item.added","sequence_number":20,"output_index":1,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_weather","call_id":"call-912fb0d5","arguments":""}}`,
+		`{"type":"response.function_call_arguments.delta","sequence_number":21,"output_index":1,"item_id":"fc_1","delta":"{\"city\":"}`,
+		`{"type":"response.function_call_arguments.delta","sequence_number":22,"output_index":1,"item_id":"fc_1","delta":"\"Paris\"}"}`,
+		`{"type":"response.function_call_arguments.done","sequence_number":23,"output_index":1,"item_id":"fc_1","arguments":"{\"city\":\"Paris\"}","name":"get_weather"}`,
+		`{"type":"response.output_item.done","sequence_number":24,"output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_weather","call_id":"call-912fb0d5","arguments":"{\"city\":\"Paris\"}"}}`,
+		`{"type":"response.completed","sequence_number":25,"response":{"id":"c831","status":"completed","usage":{"input_tokens":302,"output_tokens":180,"total_tokens":482,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":168}}}}`,
+		`{"type":"ping","cost":"0"}`,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := handler.ProxyResponsesStream(w, body, "grok-4.6", ctx, 0, cancel); err != nil {
+		t.Fatalf("ProxyResponsesStream error: %v", err)
+	}
+
+	events := parseSSEEvents(t, w.buf.String())
+
+	// Expected: message_start, tool_start(0), 2x input_json_delta,
+	// tool_stop(0), message_delta(tool_use + usage), message_stop = 7
+	if len(events) != 7 {
+		t.Fatalf("expected 7 events, got %d: %+v", len(events), events)
+	}
+	if events[0].Type != "message_start" {
+		t.Fatalf("event[0] = %q, want message_start", events[0].Type)
+	}
+
+	// tool_use block start: id from call_id, name, empty input
+	if events[1].Type != "content_block_start" || events[1].ContentBlock == nil || events[1].ContentBlock.Type != "tool_use" {
+		t.Fatalf("event[1] = %+v, want content_block_start(tool_use)", events[1])
+	}
+	if events[1].Index == nil || *events[1].Index != 0 {
+		t.Fatalf("tool block index = %v, want 0", events[1].Index)
+	}
+	if got := events[1].ContentBlock.ID; got != "call-912fb0d5" {
+		t.Errorf("tool block id = %q, want call-912fb0d5", got)
+	}
+	if got := events[1].ContentBlock.Name; got != "get_weather" {
+		t.Errorf("tool block name = %q, want get_weather", got)
+	}
+	if got := string(events[1].ContentBlock.Input); got != "{}" {
+		t.Errorf("tool block input = %q, want {}", got)
+	}
+
+	// argument deltas reconstruct the full JSON
+	if got := concatenatedPartialJSON(events, 0); got != `{"city":"Paris"}` {
+		t.Errorf("partial_json concatenation = %q, want %q", got, `{"city":"Paris"}`)
+	}
+
+	// exactly one stop for the tool block (args.done AND item.done both fire)
+	stops := contentBlockStopIndices(events)
+	if len(stops) != 1 || stops[0] != 0 {
+		t.Errorf("content_block_stop indices = %v, want [0]", stops)
+	}
+
+	// terminal message_delta: tool_use + real usage
+	md := events[5]
+	if md.Type != "message_delta" || md.Delta == nil || md.Delta.StopReason != "tool_use" {
+		t.Fatalf("event[5] = %+v, want message_delta(tool_use)", md)
+	}
+	if md.Usage == nil || md.Usage.InputTokens != 302 || md.Usage.OutputTokens != 180 {
+		t.Errorf("usage = %+v, want input 302 output 180", md.Usage)
+	}
+	if events[6].Type != "message_stop" {
+		t.Errorf("event[6] = %q, want message_stop", events[6].Type)
+	}
+
+	// reasoning summaries must not leak as text deltas
+	for _, ev := range events {
+		if ev.Delta != nil && ev.Delta.Type == "text_delta" {
+			t.Errorf("unexpected text_delta in tool-only stream: %+v", ev)
+		}
+	}
+}
+
+// TestProxyResponsesStream_TextOnlyWithUsage verifies the text-only shape is
+// unchanged and response.completed usage maps to Anthropic semantics
+// (input_tokens - cached_tokens, cache_read_input_tokens = cached_tokens).
+func TestProxyResponsesStream_TextOnlyWithUsage(t *testing.T) {
+	handler := NewStreamHandler()
+	w := newMockResponseWriter()
+	body := sseLines(
+		`{"type":"response.output_item.added","sequence_number":24,"output_index":1,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}`,
+		`{"type":"response.output_text.delta","sequence_number":26,"output_index":1,"content_index":0,"item_id":"msg_1","delta":"Hello"}`,
+		`{"type":"response.output_text.delta","sequence_number":27,"output_index":1,"content_index":0,"item_id":"msg_1","delta":" world"}`,
+		`{"type":"response.output_text.done","sequence_number":34,"output_index":1,"content_index":0,"item_id":"msg_1","text":"Hello world"}`,
+		`{"type":"response.completed","sequence_number":37,"response":{"id":"r1","status":"completed","usage":{"input_tokens":307,"output_tokens":169,"total_tokens":476,"input_tokens_details":{"cached_tokens":128},"output_tokens_details":{"reasoning_tokens":161}}}}`,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := handler.ProxyResponsesStream(w, body, "grok-4.6", ctx, 0, cancel); err != nil {
+		t.Fatalf("ProxyResponsesStream error: %v", err)
+	}
+
+	events := parseSSEEvents(t, w.buf.String())
+
+	// message_start, text_start, 2x text_delta, text_stop, message_delta, message_stop
+	if len(events) != 7 {
+		t.Fatalf("expected 7 events, got %d: %+v", len(events), events)
+	}
+	if events[1].Type != "content_block_start" || events[1].ContentBlock == nil || events[1].ContentBlock.Type != "text" {
+		t.Fatalf("event[1] = %+v, want content_block_start(text)", events[1])
+	}
+	var text strings.Builder
+	for _, ev := range events {
+		if ev.Delta != nil && ev.Delta.Type == "text_delta" {
+			text.WriteString(ev.Delta.Text)
+		}
+	}
+	if got := text.String(); got != "Hello world" {
+		t.Errorf("text deltas = %q, want %q", got, "Hello world")
+	}
+
+	// the text block must be stopped before the terminal message_delta
+	stopIdxs := eventsOfType(events, "content_block_stop")
+	deltaIdxs := eventsOfType(events, "message_delta")
+	if len(stopIdxs) != 1 || len(deltaIdxs) != 1 {
+		t.Fatalf("expected 1 content_block_stop and 1 message_delta, got %v/%v", stopIdxs, deltaIdxs)
+	}
+	if stopIdxs[0] > deltaIdxs[0] {
+		t.Errorf("content_block_stop (pos %d) must precede message_delta (pos %d)", stopIdxs[0], deltaIdxs[0])
+	}
+
+	md := events[deltaIdxs[0]]
+	if md.Delta == nil || md.Delta.StopReason != "end_turn" {
+		t.Fatalf("message_delta = %+v, want stop_reason end_turn", md)
+	}
+	if md.Usage == nil {
+		t.Fatal("message_delta usage is nil")
+	}
+	if md.Usage.InputTokens != 179 {
+		t.Errorf("input_tokens = %d, want 179 (307 total - 128 cached)", md.Usage.InputTokens)
+	}
+	if md.Usage.CacheReadInputTokens != 128 {
+		t.Errorf("cache_read_input_tokens = %d, want 128", md.Usage.CacheReadInputTokens)
+	}
+	if md.Usage.OutputTokens != 169 {
+		t.Errorf("output_tokens = %d, want 169", md.Usage.OutputTokens)
+	}
+}
+
+// TestProxyResponsesStream_MixedTextThenToolCall verifies a text block is
+// closed before the tool block opens, with contiguous indices.
+func TestProxyResponsesStream_MixedTextThenToolCall(t *testing.T) {
+	handler := NewStreamHandler()
+	w := newMockResponseWriter()
+	body := sseLines(
+		`{"type":"response.output_text.delta","sequence_number":1,"output_index":0,"item_id":"msg_1","delta":"Checking."}`,
+		`{"type":"response.output_item.added","sequence_number":2,"output_index":1,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"get_data","call_id":"call-mixed-1","arguments":""}}`,
+		`{"type":"response.function_call_arguments.delta","sequence_number":3,"output_index":1,"item_id":"fc_1","delta":"{\"id\":1}"}`,
+		`{"type":"response.function_call_arguments.done","sequence_number":4,"output_index":1,"item_id":"fc_1","arguments":"{\"id\":1}"}`,
+		`{"type":"response.output_item.done","sequence_number":5,"output_index":1,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"get_data","call_id":"call-mixed-1","arguments":"{\"id\":1}"}}`,
+		`{"type":"response.completed","sequence_number":6,"response":{"id":"r1","status":"completed","usage":{"input_tokens":10,"output_tokens":5}}}`,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := handler.ProxyResponsesStream(w, body, "gpt-5.6-luna", ctx, 0, cancel); err != nil {
+		t.Fatalf("ProxyResponsesStream error: %v", err)
+	}
+
+	events := parseSSEEvents(t, w.buf.String())
+
+	starts := eventsOfType(events, "content_block_start")
+	if len(starts) != 2 {
+		t.Fatalf("expected 2 content_block_start events, got %d: %+v", len(starts), events)
+	}
+	if events[starts[0]].ContentBlock == nil || events[starts[0]].ContentBlock.Type != "text" || *events[starts[0]].Index != 0 {
+		t.Errorf("first block = %+v, want text at index 0", events[starts[0]])
+	}
+	if events[starts[1]].ContentBlock == nil || events[starts[1]].ContentBlock.Type != "tool_use" || *events[starts[1]].Index != 1 {
+		t.Errorf("second block = %+v, want tool_use at index 1", events[starts[1]])
+	}
+	if events[starts[1]].ContentBlock.Name != "get_data" {
+		t.Errorf("tool name = %q, want get_data", events[starts[1]].ContentBlock.Name)
+	}
+
+	// text stop (index 0) must be emitted before the tool block starts
+	textStop := -1
+	for i, ev := range events {
+		if ev.Type == "content_block_stop" && ev.Index != nil && *ev.Index == 0 {
+			textStop = i
+			break
+		}
+	}
+	if textStop == -1 {
+		t.Fatalf("no content_block_stop for text block: %+v", events)
+	}
+	if textStop > starts[1] {
+		t.Errorf("text stop (pos %d) must precede tool start (pos %d)", textStop, starts[1])
+	}
+
+	stops := contentBlockStopIndices(events)
+	if len(stops) != 2 || stops[0] != 0 || stops[1] != 1 {
+		t.Errorf("content_block_stop indices = %v, want [0 1]", stops)
+	}
+
+	var md *types.MessageEvent
+	for i := range events {
+		if events[i].Type == "message_delta" {
+			md = &events[i]
+			break
+		}
+	}
+	if md == nil || md.Delta == nil || md.Delta.StopReason != "tool_use" {
+		t.Fatalf("message_delta = %+v, want stop_reason tool_use", md)
+	}
+}
+
+// TestProxyResponsesStream_ParallelToolCalls verifies two function_call items
+// each get their own tool_use block, in order, each stopped exactly once.
+func TestProxyResponsesStream_ParallelToolCalls(t *testing.T) {
+	handler := NewStreamHandler()
+	w := newMockResponseWriter()
+	body := sseLines(
+		`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_a","type":"function_call","status":"in_progress","name":"search","call_id":"call-a","arguments":""}}`,
+		`{"type":"response.output_item.added","sequence_number":2,"output_index":1,"item":{"id":"fc_b","type":"function_call","status":"in_progress","name":"lookup","call_id":"call-b","arguments":""}}`,
+		`{"type":"response.function_call_arguments.delta","sequence_number":3,"output_index":0,"item_id":"fc_a","delta":"{\"q\":\"go\"}"}`,
+		`{"type":"response.function_call_arguments.delta","sequence_number":4,"output_index":1,"item_id":"fc_b","delta":"{\"id\":42}"}`,
+		`{"type":"response.function_call_arguments.done","sequence_number":5,"output_index":0,"item_id":"fc_a","arguments":"{\"q\":\"go\"}"}`,
+		`{"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"fc_a","type":"function_call","status":"completed","name":"search","call_id":"call-a","arguments":"{\"q\":\"go\"}"}}`,
+		`{"type":"response.function_call_arguments.done","sequence_number":7,"output_index":1,"item_id":"fc_b","arguments":"{\"id\":42}"}`,
+		`{"type":"response.output_item.done","sequence_number":8,"output_index":1,"item":{"id":"fc_b","type":"function_call","status":"completed","name":"lookup","call_id":"call-b","arguments":"{\"id\":42}"}}`,
+		`{"type":"response.completed","sequence_number":9,"response":{"id":"r1","status":"completed","usage":{"input_tokens":20,"output_tokens":8}}}`,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := handler.ProxyResponsesStream(w, body, "muse-spark-1.2", ctx, 0, cancel); err != nil {
+		t.Fatalf("ProxyResponsesStream error: %v", err)
+	}
+
+	events := parseSSEEvents(t, w.buf.String())
+
+	starts := eventsOfType(events, "content_block_start")
+	if len(starts) != 2 {
+		t.Fatalf("expected 2 tool blocks, got %d: %+v", len(starts), events)
+	}
+	if events[starts[0]].ContentBlock == nil || events[starts[0]].ContentBlock.Type != "tool_use" ||
+		events[starts[0]].ContentBlock.ID != "call-a" || events[starts[0]].ContentBlock.Name != "search" || *events[starts[0]].Index != 0 {
+		t.Errorf("first tool block = %+v, want search/call-a at 0", events[starts[0]])
+	}
+	if events[starts[1]].ContentBlock == nil || events[starts[1]].ContentBlock.Type != "tool_use" ||
+		events[starts[1]].ContentBlock.ID != "call-b" || events[starts[1]].ContentBlock.Name != "lookup" || *events[starts[1]].Index != 1 {
+		t.Errorf("second tool block = %+v, want lookup/call-b at 1", events[starts[1]])
+	}
+
+	if got := concatenatedPartialJSON(events, 0); got != `{"q":"go"}` {
+		t.Errorf("block 0 partial_json = %q, want %q", got, `{"q":"go"}`)
+	}
+	if got := concatenatedPartialJSON(events, 1); got != `{"id":42}` {
+		t.Errorf("block 1 partial_json = %q, want %q", got, `{"id":42}`)
+	}
+
+	stops := contentBlockStopIndices(events)
+	if len(stops) != 2 || stops[0] != 0 || stops[1] != 1 {
+		t.Errorf("content_block_stop indices = %v, want [0 1]", stops)
+	}
+
+	var md *types.MessageEvent
+	for i := range events {
+		if events[i].Type == "message_delta" {
+			md = &events[i]
+			break
+		}
+	}
+	if md == nil || md.Delta == nil || md.Delta.StopReason != "tool_use" {
+		t.Fatalf("message_delta = %+v, want stop_reason tool_use", md)
+	}
+}
+
+// TestProxyResponsesStream_EOFFallbackWithoutCompleted verifies streams that
+// end without response.completed: every started block is stopped exactly once
+// and the fallback message_delta is still emitted (end_turn for text, tool_use
+// when a tool block was started).
+func TestProxyResponsesStream_EOFFallbackWithoutCompleted(t *testing.T) {
+	t.Run("text stream falls back to end_turn", func(t *testing.T) {
+		handler := NewStreamHandler()
+		w := newMockResponseWriter()
+		body := sseLines(
+			`{"type":"response.output_text.delta","sequence_number":1,"output_index":0,"item_id":"msg_1","delta":"Hello"}`,
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		if err := handler.ProxyResponsesStream(w, body, "grok-4.6", ctx, 0, cancel); err != nil {
+			t.Fatalf("ProxyResponsesStream error: %v", err)
+		}
+
+		events := parseSSEEvents(t, w.buf.String())
+		// message_start, text_start, text_delta, text_stop, message_delta, message_stop
+		if len(events) != 6 {
+			t.Fatalf("expected 6 events, got %d: %+v", len(events), events)
+		}
+		stops := contentBlockStopIndices(events)
+		if len(stops) != 1 || stops[0] != 0 {
+			t.Errorf("content_block_stop indices = %v, want [0]", stops)
+		}
+		if events[4].Type != "message_delta" || events[4].Delta == nil || events[4].Delta.StopReason != "end_turn" {
+			t.Errorf("event[4] = %+v, want message_delta(end_turn)", events[4])
+		}
+		if events[5].Type != "message_stop" {
+			t.Errorf("event[5] = %q, want message_stop", events[5].Type)
+		}
+	})
+
+	t.Run("tool stream falls back to tool_use", func(t *testing.T) {
+		handler := NewStreamHandler()
+		w := newMockResponseWriter()
+		body := sseLines(
+			`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"read_file","call_id":"call-eof","arguments":""}}`,
+			`{"type":"response.function_call_arguments.delta","sequence_number":2,"output_index":0,"item_id":"fc_1","delta":"{\"path\":\"/tmp/x\"}"}`,
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		if err := handler.ProxyResponsesStream(w, body, "grok-4.6", ctx, 0, cancel); err != nil {
+			t.Fatalf("ProxyResponsesStream error: %v", err)
+		}
+
+		events := parseSSEEvents(t, w.buf.String())
+		// message_start, tool_start, input_json_delta, tool_stop, message_delta, message_stop
+		if len(events) != 6 {
+			t.Fatalf("expected 6 events, got %d: %+v", len(events), events)
+		}
+		stops := contentBlockStopIndices(events)
+		if len(stops) != 1 || stops[0] != 0 {
+			t.Errorf("content_block_stop indices = %v, want [0]", stops)
+		}
+		if events[4].Type != "message_delta" || events[4].Delta == nil || events[4].Delta.StopReason != "tool_use" {
+			t.Errorf("event[4] = %+v, want message_delta(tool_use)", events[4])
+		}
+		if events[5].Type != "message_stop" {
+			t.Errorf("event[5] = %q, want message_stop", events[5].Type)
+		}
+	})
+}
+
 func TestProxyStream_NoDuplicateToolStopsOnErrorAfterFinishReason(t *testing.T) {
 	handler := NewStreamHandler()
 	w := newMockResponseWriter()

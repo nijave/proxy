@@ -62,17 +62,28 @@ type ResponsesContent struct {
 
 // ResponsesUsage represents token usage in a Responses response.
 type ResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens        int                          `json:"input_tokens"`
+	OutputTokens       int                          `json:"output_tokens"`
+	InputTokensDetails *ResponsesInputTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+// ResponsesInputTokensDetails breaks out cached-token accounting nested under
+// usage.input_tokens_details in the Responses API.
+type ResponsesInputTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 // ResponsesChunk represents a streaming chunk from the Responses API.
 type ResponsesChunk struct {
-	Type   string            `json:"type"`
-	ID     string            `json:"id,omitempty"`
-	Delta  string            `json:"delta,omitempty"`
-	Output []ResponsesOutput `json:"output,omitempty"`
-	Usage  *ResponsesUsage   `json:"usage,omitempty"`
+	Type      string             `json:"type"`
+	ID        string             `json:"id,omitempty"`
+	Delta     string             `json:"delta,omitempty"`
+	ItemID    string             `json:"item_id,omitempty"`
+	Arguments string             `json:"arguments,omitempty"`
+	Output    []ResponsesOutput  `json:"output,omitempty"`
+	Usage     *ResponsesUsage    `json:"usage,omitempty"`
+	Item      *ResponsesOutput   `json:"item,omitempty"`
+	Response  *ResponsesResponse `json:"response,omitempty"`
 }
 
 // Google Gemini API types.
