@@ -31,6 +31,12 @@ func NewAWSBedrockProvider(atomic *config.AtomicConfig) *AWSBedrockProvider {
 // Name returns the provider identifier.
 func (p *AWSBedrockProvider) Name() string { return "aws-bedrock" }
 
+// ValidateRequest checks ordered content against this provider's capabilities
+// before any upstream request is attempted.
+func (p *AWSBedrockProvider) ValidateRequest(req *core.NormalizedRequest, model config.ModelConfig) error {
+	return validateRequest(p, req, model)
+}
+
 // Capabilities returns provider-level capabilities.
 func (p *AWSBedrockProvider) Capabilities() core.ProviderCapabilities {
 	return core.ProviderCapabilities{
@@ -230,7 +236,7 @@ func (p *AWSBedrockProvider) streamResponses(ctx context.Context, req *core.Norm
 func (p *AWSBedrockProvider) buildResponsesRequest(req *core.NormalizedRequest, model config.ModelConfig) *types.ResponsesRequest {
 	var inputs []types.ResponsesInput
 	for _, msg := range req.Messages {
-		contentBytes, _ := json.Marshal(msg.Content)
+		contentBytes, _ := json.Marshal(msg.TextContent())
 		inputs = append(inputs, types.ResponsesInput{
 			Role:    msg.Role,
 			Content: contentBytes,
