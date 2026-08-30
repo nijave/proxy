@@ -38,6 +38,15 @@ func TestOpenCodeGoProvider_WireFormat_Override(t *testing.T) {
 		{"auto falls back to anthropic", "qwen3.7-max", "auto", core.WireFormatAnthropic},
 		{"unrecognised falls back", "minimax-m3", "not-a-format", core.WireFormatAnthropic},
 
+		// Responses families classify as Responses without an override —
+		// the same selection path Zen uses. The upstream rejects these for
+		// the oa-compat (Chat Completions) format.
+		{"grok-4.6 defaults to responses", "grok-4.6", "", core.WireFormatOpenAIResponses},
+		{"gpt-5.6-luna defaults to responses", "gpt-5.6-luna", "", core.WireFormatOpenAIResponses},
+		{"muse-spark defaults to responses", "muse-spark-1.2-contributor", "", core.WireFormatOpenAIResponses},
+		// An explicit override still beats the built-in classification.
+		{"chat override on grok wins", "grok-4.6", "chat", core.WireFormatOpenAIChat},
+
 		// The Go provider has no Gemini path, so "gemini" must not be honoured —
 		// otherwise Execute/Stream would silently send a chat body to BaseURL.
 		{"gemini is ignored", "deepseek-v4-pro", "gemini", core.WireFormatOpenAIChat},
