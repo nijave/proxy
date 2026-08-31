@@ -314,15 +314,20 @@ func IsAnthropicModel(modelID string) bool {
 }
 
 // GoWireFormat is the built-in wire-format classification for Go provider
-// models, used whenever no `wire_format` override is configured. The Go
-// provider only distinguishes Anthropic-native models from Chat Completions;
-// the Responses endpoint is opt-in via `wire_format: "responses"`.
+// models, used whenever no `wire_format` override is configured. Responses
+// families (gpt-/grok-/muse-spark-) share the same prefix classifier Zen
+// uses — the Go upstream rejects them for the oa-compat (Chat Completions)
+// format. The Anthropic list stays Go-specific: minimax models use Anthropic
+// on the Go provider but Chat Completions on Zen.
 //
 // Both the provider dispatch and the legacy client resolve Go models through
 // this function so they always agree on the endpoint and the body format.
 func GoWireFormat(modelID string) core.WireFormat {
 	if IsAnthropicModel(modelID) {
 		return core.WireFormatAnthropic
+	}
+	if models.IsResponsesModel(modelID) {
+		return core.WireFormatOpenAIResponses
 	}
 	return core.WireFormatOpenAIChat
 }

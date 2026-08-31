@@ -34,16 +34,17 @@ make dist    # Cross-compile for all platforms
 
 **Purpose:** routatic-proxy is a proxy server that sits between Claude Code and OpenCode Go. It intercepts Anthropic API requests, transforms them to OpenAI Chat Completions format, forwards them to OpenCode Go, and transforms responses back to Anthropic SSE.
 
-**Model routing is config-driven for existing model families.** All models are defined in `~/.config/routatic-proxy/config.json`. Adding a Go-provider model or a Zen model whose ID matches a recognized family prefix requires only config changes. A new Zen family that uses a non-default endpoint requires updating `ClassifyEndpoint()`. Go-provider wire-format differences remain configurable through `wire_format`. The router in `internal/router/` selects models by matching request content against scenario patterns defined in `scenarios.go`.
+**Model routing is config-driven for existing model families.** The config file `~/.config/routatic-proxy/config.json` defines all models. Adding a Go-provider model or a Zen model whose ID matches a recognized family prefix requires only config changes. A new Zen family that uses a non-default endpoint requires updating `ClassifyEndpoint()`. Go-provider wire-format differences remain configurable through `wire_format`. The router in `internal/router/` selects models by matching request content against scenario patterns defined in `scenarios.go`.
 
 If a model's upstream doesn't support Anthropic tool format (`type: "custom"` server-tool shorthands), set `"anthropic_tools_disabled": true` in the model config to force it through the Chat Completions transform path instead of the raw Anthropic endpoint.
 
 If you need to force a specific thinking state regardless of what the client requests (e.g. disable DeepSeek's thinking-on default on the `haiku` family while leaving `sonnet` enabled), set `"thinking_mode"` on the model config — one of `"auto"` (default, client wins), `"strip"` (send no thinking param), `"disabled"` (send `{"type":"disabled"}`), or `"enabled"` (send `{"type":"enabled"}` and also emit `reasoning_effort`, defaulting to `"high"` and overridable via the `reasoning_effort` field). It works in `models`, `model_overrides`, and `model_family_overrides`, and wins over the client's `thinking` field and any thinking blocks in history. It only affects models whose upstream accepts these params (a no-op otherwise), and the DeepSeek safety guard — which forces thinking off when assistant history lacks reasoning blocks — still wins over it.
 
-**Two API endpoints:**
+**API endpoints:** Both providers select the endpoint/wire format through the same prefix classifier (`models.ClassifyEndpoint` on Zen, `client.GoWireFormat` on Go — both share the Responses-family prefixes):
 
-- OpenAI endpoint (`/v1/chat/completions`) — used by most models (GLM, Kimi, MiMo, Qwen)
-- Anthropic endpoint (`/v1/messages`) — used only by MiniMax models
+- OpenAI endpoint (`/v1/chat/completions`) — used by most models (GLM, Kimi, MiMo, DeepSeek)
+- Responses endpoint (`/v1/responses`) — used by the `gpt-`, `grok-`, and `muse-spark-` families on both providers; the upstream rejects them for the oa-compat Chat Completions format
+- Anthropic endpoint (`/v1/messages`) — used by MiniMax and Qwen models on the Go provider; Claude and Qwen models on Zen
 
 **Available models:**
 
@@ -62,7 +63,7 @@ If you need to force a specific thinking state regardless of what the client req
 | MiniMax | Zen | Long context | 1M context window |
 | MiMo | Go | Reasoning | Step-by-step reasoning |
 
-`internal/client/opencode.go` routes Go provider models to Chat Completions; Zen models are classified by `models.ClassifyEndpoint()` in `internal/models/classifier.go`. If a model's upstream doesn't support Anthropic tool format, set `anthropic_tools_disabled: true` in config.
+`internal/client/opencode.go` and `internal/models/classifier.go` classify wire format per model; a per-model `"wire_format"` override (`"chat"`, `"responses"`, `"anthropic"`) in config wins over the built-in classification. If a model's upstream doesn't support Anthropic tool format, set `anthropic_tools_disabled: true` in config.
 
 **Scenario detection priority** (`internal/router/scenarios.go`):
 
@@ -72,20 +73,20 @@ If you need to force a specific thinking state regardless of what the client req
 4. Background (simple read-only ops, no tools) → Qwen3.7 Max
 5. Default → Kimi K2.6
 
-**Model overrides:** two config blocks bypass scenario routing based on the requested model. `model_overrides` matches the `model` string **exactly** (best with CC-Switch, which sends a custom model string). `model_family_overrides` maps a Claude family keyword (`opus`, `sonnet`, `haiku`) via **case-insensitive substring** match, so the versioned IDs Claude Code sends natively (`claude-opus-4-20250514`) route without CC-Switch. Precedence: exact `model_overrides` → `model_family_overrides` (longest key first) → `respect_requested_model` → scenario routing. Both are wired through `ModelRouter.RouteWithOverride` / `RouteWithFamilyOverride` (`internal/router/model_router.go`) and merged with a deduplicated scenario safety-net chain in `buildModelChain` (`internal/handlers/messages.go`).
+**Model overrides:** two config blocks bypass scenario routing based on the requested model. `model_overrides` matches the `model` string **exactly** (best with CC-Switch, which sends a custom model string). `model_family_overrides` maps a Claude family keyword (`opus`, `sonnet`, `haiku`) via **case-insensitive substring** match, so the versioned IDs Claude Code sends natively (`claude-opus-4-20250514`) route without CC-Switch. Precedence: exact `model_overrides` → `model_family_overrides` (longest key first) → `respect_requested_model` → scenario routing. Both flow through `ModelRouter.RouteWithOverride` / `RouteWithFamilyOverride` (`internal/router/model_router.go`) and merge with a deduplicated scenario safety-net chain in `buildModelChain` (`internal/handlers/messages.go`).
 
-**Cost-based routing:** when `cost_routing.enabled` is set, `Selector` in `internal/router/selector.go` replaces the static primary model with automatic cheapest-model selection from the catalog. It applies `max_context_window` (hard cap on context window), `prefer_providers` (global provider filter, intersected with per-scenario preferences), and `penalty_per_provider` (per-provider cost penalty added during sort). Enabled via `cost_routing.enabled` or the legacy `enable_cost_based_routing` flag.
+**Cost-based routing:** when the config sets `cost_routing.enabled`, `Selector` in `internal/router/selector.go` replaces the static primary model with automatic cheapest-model selection from the catalog. It applies `max_context_window` (hard cap on context window), `prefer_providers` (global provider filter, intersected with per-scenario preferences), and `penalty_per_provider` (per-provider cost penalty added during sort). Enabled via `cost_routing.enabled` or the legacy `enable_cost_based_routing` flag.
 
-**Catalog schema:** Models are keyed as `provider/model-name` (e.g., `opencode-go/glm-5.2`). The catalog (`~/.config/routatic-proxy/catalog/catalog.json`) contains:
+**Catalog schema:** Model entries use `provider/model-name` keys (e.g., `opencode-go/glm-5.2`). The catalog (`~/.config/routatic-proxy/catalog/catalog.json`) contains:
 - `providers` — Provider definitions with `name`, `base_url`, `enabled`
 - `models` — Model definitions keyed by full key with fields:
   - `id` — Full key (matches the map key)
   - `name` — Display name
   - `limit.context` — Context window size
   - `rates.input`/`rates.output` — Cost per million tokens
-  - `tool_call` — Whether tools are supported
+  - `tool_call` — Whether the model supports tools
   - `modalities.input`/`output` — Input/output types (`["text"]` or `["text", "image"]` for vision)
-  - `reasoning` — Whether reasoning mode is supported
+  - `reasoning` — Whether the model supports reasoning mode
 
 Resolution functions in `internal/catalog/resolve.go` extract the provider from the key prefix. `ResolvedModel.ModelID` is the model name only (without provider prefix); `ResolvedModel.CanonicalName` is the full key.
 
@@ -96,9 +97,9 @@ For streaming, the router downgrades to fast models (Qwen3.7 Plus) for better TT
 
 **Polymorphic field handling:** Anthropic's `system` and `content` fields accept both strings and arrays. `pkg/types/` uses `json.RawMessage` with accessor methods (`SystemText()`, `ContentBlocks()`) to handle both formats.
 
-**Long-running stream policy:** The proxy never kills a stream that is actively producing bytes. The server-level `WriteTimeout` is set to 0; instead each upstream read uses a per-`Read` deadline via `http.ResponseController.SetReadDeadline` that is renewed on every successful byte. If the gap between bytes exceeds `OpenCodeGo.stream_timeout_ms` (or `OpenCodeZen.stream_timeout_ms`), the connection is treated as stuck and the request is routed to the next fallback model. Defaults to `timeout_ms` when unset. Client disconnects during a stream are logged at `Debug` level — this is normal during Claude Code tool execution and is not a failure signal.
+**Long-running stream policy:** The proxy never kills a stream that is actively producing bytes. The server sets `WriteTimeout` to 0; each upstream read instead carries a per-`Read` deadline via `http.ResponseController.SetReadDeadline`, and every successful byte renews it. If the gap between bytes exceeds `OpenCodeGo.stream_timeout_ms` (or `OpenCodeZen.stream_timeout_ms`), the proxy treats the connection as stuck and routes the request to the next fallback model. It defaults to `timeout_ms` when unset. The proxy logs client disconnects during a stream at `Debug` level — this is normal during Claude Code tool execution, not a failure signal.
 
-**Empty-response fallback:** a stream that ends with reasoning but no answer content (zero text/tool_use blocks — observed on free-tier models during launch-week load) is treated as a model failure. While a model attempt is in flight the proxy withholds client-visible SSE bytes up to `empty_response_fallback.holdback_limit_bytes` (default 32 KiB), so a thinking-only stream can be discarded and retried on the next model without the client seeing it. Streams that exceed the cap stream through as today and surface a visible SSE error instead of a fake clean end; non-streaming responses without answer content also fall back. Disabling with `"empty_response_fallback": {"enabled": false}` skips only hold-back and silent retry — a no-answer stream still counts as a model failure (visible SSE error plus circuit-breaker credit), it does not restore the pre-feature clean-but-empty end. Content detection matches markers across chunk boundaries (the raw Anthropic passthrough copies upstream bytes in fixed-size chunks that can split an SSE frame mid-token) and tolerates JSON whitespace in `"type": "tool_use"`. Note: this knob is read once at startup — changing it requires a proxy restart even with hot_reload enabled.
+**Empty-response fallback:** the proxy treats a stream that ends with reasoning but no answer content (zero text/tool_use blocks — observed on free-tier models during launch-week load) as a model failure. While a model attempt is in flight the proxy withholds client-visible SSE bytes up to `empty_response_fallback.holdback_limit_bytes` (default 32 KiB), so it can discard a thinking-only stream and retry on the next model without the client seeing it. Streams that exceed the cap stream through as today and surface a visible SSE error instead of a fake clean end; non-streaming responses without answer content also fall back. Disabling with `"empty_response_fallback": {"enabled": false}` skips only hold-back and silent retry — a no-answer stream still counts as a model failure (visible SSE error plus circuit-breaker credit); it does not restore the pre-feature clean-but-empty end. Content detection matches markers across chunk boundaries (the raw Anthropic passthrough copies upstream bytes in fixed-size chunks that can split an SSE frame mid-token) and tolerates JSON whitespace in `"type": "tool_use"`. Note: the proxy reads this knob once at startup — changing it requires a proxy restart even with hot_reload enabled.
 
 **Provider-specific API keys:** Each provider (OpenCode Go, OpenCode Zen, AWS Bedrock) can have its own `api_key` or `api_keys` array. Provider-specific keys take precedence over global keys. This enables per-provider fallback strategies and key rotation.
 
@@ -116,7 +117,7 @@ Precedence: `*_API_KEYS` → `*_API_KEY` → global `API_KEYS` → global `API_K
 
 ## Key Files
 
-- `cmd/routatic-proxy/main.go` — CLI entry point (cobra). Default config template is generated here.
+- `cmd/routatic-proxy/main.go` — CLI entry point (cobra). This file generates the default config template.
 - `internal/config/` — Config types and JSON loader with `${VAR}` env interpolation.
 - `internal/transformer/` — Request/response format conversion (Anthropic ↔ OpenAI).
 - `internal/router/fallback.go` — Circuit breaker per model (3 failures = 30s skip).
@@ -130,7 +131,7 @@ Precedence: `*_API_KEYS` → `*_API_KEY` → global `API_KEYS` → global `API_K
 
 ### GUI Config Editing
 
-The Settings tab exposes all config fields as editable form inputs. On save, only changed fields are sent to the backend as a JSON patch. The backend reads the current config from disk, merges the patch, writes back, and reloads atomically — the running proxy picks up changes immediately without restart.
+The Settings tab exposes all config fields as editable form inputs. On save, the frontend sends only changed fields to the backend as a JSON patch. The backend reads the current config from disk, merges the patch, writes back, and reloads atomically — the running proxy picks up changes immediately without restart.
 
 **Partial update flow:**
 1. Frontend builds a patch object with only fields the user changed (compared to the last loaded config)
@@ -170,9 +171,9 @@ Production releases include all beta features plus:
 
 ### Version Detection Script
 
-`.github/scripts/get-versions.sh` is used by the beta workflow to:
+The beta workflow uses `.github/scripts/get-versions.sh` to:
 1. Fetch tags from the `origin/releases` branch to get current production version (e.g., `v0.5.2`)
-2. Increment the **patch** to the next version (e.g., `v0.5.3`) - **beta is based on the upcoming patch release**
+2. Increment the **patch** to the next version (e.g., `v0.5.3`) - **beta targets the upcoming patch release**
 3. Generate beta version by appending `-beta.{N}`, where `{N}` is `max(existing beta counters for this upcoming version) + 1` - **the counter resets to 1 once the upcoming version ships as stable**
 4. Output both versions as JSON for CI consumption
 
@@ -180,7 +181,7 @@ Production releases include all beta features plus:
 **Version Format Explanation:**
 - `v0.5.3` = The upcoming production version (patch incremented from latest production)
 - `beta.1` = Sequential prerelease counter for that upcoming version
-- Full example: stable `v0.5.2` → `v0.5.3-beta.1`, then `v0.5.3-beta.2`, ... until `v0.5.3` ships → `v0.5.4-beta.1`
+- Full example: stable `v0.5.2` → `v0.5.3-beta.1`, then `v0.5.3-beta.2`, … until `v0.5.3` ships → `v0.5.4-beta.1`
 
 ### Creating a Production Release
 
@@ -195,7 +196,7 @@ Production releases include all beta features plus:
 
 Both workflows share the same stages:
 
-1. **validate** — Run `go vet`, `go test -race`, and build sanity check on ubuntu-latest
+1. **Checks stage** — runs `go vet`, `go test -race`, and a build sanity check on ubuntu-latest
 2. **release** — Build cross-platform binaries and macOS DMG on macos-latest
 3. **docker** — Publish multi-arch Docker images on ubuntu-latest
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/routatic/proxy/internal/config"
+	"github.com/routatic/proxy/internal/core"
 	"github.com/routatic/proxy/pkg/types"
 )
 
@@ -367,6 +368,75 @@ func TestClassifyEndpoint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ClassifyEndpoint(tt.modelID); got != tt.expected {
 				t.Fatalf("ClassifyEndpoint(%q) = %v, want %v", tt.modelID, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGoWireFormat pins the built-in wire-format classification for Go
+// provider models. Responses-family selection must match the shared prefix
+// classifier Zen uses (models.IsResponsesModel) — the Go upstream rejects
+// these families for the oa-compat (Chat Completions) format.
+func TestGoWireFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		modelID  string
+		expected core.WireFormat
+	}{
+		// Responses families — same selection path as Zen's ClassifyEndpoint.
+		{
+			name:     "grok-4.6 uses responses endpoint",
+			modelID:  "grok-4.6",
+			expected: core.WireFormatOpenAIResponses,
+		},
+		{
+			name:     "grok-build-0.1 uses responses endpoint",
+			modelID:  "grok-build-0.1",
+			expected: core.WireFormatOpenAIResponses,
+		},
+		{
+			name:     "gpt-5.6-luna uses responses endpoint",
+			modelID:  "gpt-5.6-luna",
+			expected: core.WireFormatOpenAIResponses,
+		},
+		{
+			name:     "muse-spark-1.2-contributor uses responses endpoint",
+			modelID:  "muse-spark-1.2-contributor",
+			expected: core.WireFormatOpenAIResponses,
+		},
+		// Anthropic-native models on the Go provider.
+		{
+			name:     "minimax-m3 uses anthropic endpoint",
+			modelID:  "minimax-m3",
+			expected: core.WireFormatAnthropic,
+		},
+		{
+			name:     "qwen3.7-max uses anthropic endpoint",
+			modelID:  "qwen3.7-max",
+			expected: core.WireFormatAnthropic,
+		},
+		// Everything else stays on chat completions.
+		{
+			name:     "glm-5.2 uses chat completions endpoint",
+			modelID:  "glm-5.2",
+			expected: core.WireFormatOpenAIChat,
+		},
+		{
+			name:     "kimi-k2.7-code uses chat completions endpoint",
+			modelID:  "kimi-k2.7-code",
+			expected: core.WireFormatOpenAIChat,
+		},
+		{
+			name:     "deepseek-v4-flash uses chat completions endpoint",
+			modelID:  "deepseek-v4-flash",
+			expected: core.WireFormatOpenAIChat,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GoWireFormat(tt.modelID); got != tt.expected {
+				t.Fatalf("GoWireFormat(%q) = %v, want %v", tt.modelID, got, tt.expected)
 			}
 		})
 	}
