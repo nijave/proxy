@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
@@ -57,18 +58,48 @@ func NormalizedToResponses(req *core.NormalizedRequest, model config.ModelConfig
 
 	// Convert messages.
 	for _, msg := range req.Messages {
-		input := types.ResponsesInput{Role: msg.Role}
-		content := msg.TextContent()
+		var textParts []string
 
-		// For assistant messages with tool calls, serialize as text.
-		for _, tc := range msg.ToolCallsList() {
-			content += "[Tool: " + tc.Name + "(" + tc.Arguments + ")]"
+		flushText := func() {
+			if len(textParts) == 0 {
+				return
+			}
+			responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
+				Role:    msg.Role,
+				Content: rawJSONString(strings.Join(textParts, "")),
+			})
+			textParts = nil
 		}
 
-		if content != "" {
-			input.Content = rawJSONString(content)
+		for _, block := range msg.Blocks {
+			switch block.Type {
+			case "text":
+				textParts = append(textParts, block.Text)
+			case "image":
+				textParts = append(textParts, "[Image]")
+			case "tool_use":
+				flushText()
+				arguments := string(block.Input)
+				if arguments == "" {
+					arguments = "{}"
+				}
+				responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
+					Type:      "function_call",
+					CallID:    block.ID,
+					Name:      block.Name,
+					Arguments: arguments,
+				})
+			case "tool_result":
+				flushText()
+				responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
+					Type:   "function_call_output",
+					CallID: block.ToolUseID,
+					Output: normalizedToolResultText(block.Content),
+				})
+			}
 		}
-		responsesReq.Input = append(responsesReq.Input, input)
+
+		flushText()
 	}
 
 	// Convert tools.
@@ -380,6 +411,30 @@ func rawJSONString(s string) json.RawMessage {
 		return json.RawMessage(`""`)
 	}
 	return json.RawMessage(b)
+}
+
+// normalizedToolResultText extracts the text of a tool_result block's raw
+// content, which may be a JSON string or an array of content blocks.
+func normalizedToolResultText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil {
+		for _, block := range blocks {
+			if block.Type == "text" {
+				text += block.Text
+			}
+		}
+		if text != "" {
+			return text
+		}
+	}
+	return string(raw)
 }
 
 // joinMessageText concatenates the content of all messages for use as a

@@ -2,7 +2,6 @@ package transformer
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/routatic/proxy/internal/config"
@@ -31,6 +30,22 @@ func (t *RequestTransformer) TransformToResponses(
 		blocks := msg.ContentBlocks()
 		var textParts []string
 
+		flushText := func() {
+			if len(textParts) == 0 {
+				return
+			}
+			var sb strings.Builder
+			for _, p := range textParts {
+				sb.WriteString(p)
+			}
+			content, _ := json.Marshal(sb.String())
+			input = append(input, types.ResponsesInput{
+				Role:    msg.Role,
+				Content: content,
+			})
+			textParts = nil
+		}
+
 		for _, block := range blocks {
 			switch block.Type {
 			case "text":
@@ -38,30 +53,28 @@ func (t *RequestTransformer) TransformToResponses(
 			case "image":
 				textParts = append(textParts, "[Image]")
 			case "tool_use":
-				textParts = append(textParts, fmt.Sprintf("[Tool: %s(%s)]", block.Name, string(block.Input)))
-			case "tool_result":
-				// For Responses API, tool results are separate items
-				toolContent := block.TextContent()
-				content, _ := json.Marshal(toolContent)
+				flushText()
+				arguments := string(block.Input)
+				if arguments == "" {
+					arguments = "{}"
+				}
 				input = append(input, types.ResponsesInput{
-					Role:    "tool",
-					Content: content,
+					Type:      "function_call",
+					CallID:    block.ID,
+					Name:      block.Name,
+					Arguments: arguments,
+				})
+			case "tool_result":
+				flushText()
+				input = append(input, types.ResponsesInput{
+					Type:   "function_call_output",
+					CallID: block.ToolUseID,
+					Output: block.TextContent(),
 				})
 			}
 		}
 
-		if len(textParts) > 0 {
-			var sb strings.Builder
-			for _, p := range textParts {
-				sb.WriteString(p)
-			}
-			text := sb.String()
-			content, _ := json.Marshal(text)
-			input = append(input, types.ResponsesInput{
-				Role:    msg.Role,
-				Content: content,
-			})
-		}
+		flushText()
 	}
 
 	req := &types.ResponsesRequest{
