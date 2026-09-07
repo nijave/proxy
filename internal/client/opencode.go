@@ -500,6 +500,7 @@ func (c *OpenCodeClient) ChatCompletion(
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	SetSessionHeader(ctx, httpReq.Header)
 	// Anthropic endpoint uses x-api-key; OpenAI endpoint uses Bearer
 	if models.IsAnthropicModel(modelID) {
 		httpReq.Header.Set("x-api-key", endpoint.APIKey)
@@ -616,6 +617,7 @@ func (c *OpenCodeClient) SendAnthropicRequest(
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("x-api-key", apiKey)
 
@@ -662,6 +664,7 @@ func (c *OpenCodeClient) ResponsesCompletion(
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+endpoint.APIKey)
 	if IsOpenRouter(modelConfig) {
 		setOpenRouterHeaders(httpReq)
@@ -762,6 +765,7 @@ func (c *OpenCodeClient) GeminiCompletion(
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+endpoint.APIKey)
 	if IsOpenRouter(modelConfig) {
 		setOpenRouterHeaders(httpReq)
