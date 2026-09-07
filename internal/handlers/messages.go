@@ -801,7 +801,9 @@ func (h *MessagesHandler) handleStreaming(
 	requestID string,
 	requestStarts ...time.Time,
 ) {
-	clientCtx := r.Context()
+	// Carry the resolved x-opencode-session value on every upstream request
+	// the proxy issues for this call (streaming and non-streaming paths).
+	clientCtx := client.WithSessionContext(r.Context(), resolveUpstreamSessionID(r.Header, anthropicReq))
 	requestStart := time.Now()
 	if len(requestStarts) > 0 {
 		requestStart = requestStarts[0]
@@ -1420,7 +1422,9 @@ func (h *MessagesHandler) handleNonStreaming(
 	scenario router.Scenario,
 	requestID string,
 ) {
-	ctx := r.Context()
+	// Carry the resolved x-opencode-session value on every upstream request
+	// the proxy issues for this call (streaming and non-streaming paths).
+	ctx := client.WithSessionContext(r.Context(), resolveUpstreamSessionID(r.Header, anthropicReq))
 	startTime := time.Now()
 	upstreamStart := time.Now()
 

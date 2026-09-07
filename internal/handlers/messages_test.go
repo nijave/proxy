@@ -2671,3 +2671,180 @@ func TestHandleNonStreaming_EmptyAnswer_FallsBackToNextModel(t *testing.T) {
 		t.Errorf("status = %d, want 200", recorder.Code)
 	}
 }
+
+func TestHandleStreaming_ThreadsSessionHeaderToProviderUpstream(t *testing.T) {
+	var upstreamSession string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamSession = r.Header.Get("x-opencode-session")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL:         upstream.URL,
+			TimeoutMs:       5000,
+			StreamTimeoutMs: 5000,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	registry := core.NewProviderRegistry()
+	_ = registry.Register(provider.NewOpenCodeGoProvider(atomicCfg))
+
+	h := &MessagesHandler{
+		client:           client.NewOpenCodeClient(atomicCfg, nil),
+		providerRegistry: registry,
+		streamProxy:      NewStreamProxy(),
+		logger:           slog.Default(),
+		metrics:          metrics.New(),
+	}
+
+	stream := true
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	req.Header.Set("x-claude-code-session-id", "sess-e2e-stream")
+	h.handleStreaming(
+		httptest.NewRecorder(),
+		req,
+		&types.MessageRequest{Stream: &stream},
+		&core.NormalizedRequest{Stream: true},
+		[]config.ModelConfig{{Provider: "opencode-go", ModelID: "deepseek-v4-pro"}},
+		nil,
+		router.ScenarioDefault,
+		"",
+	)
+
+	if upstreamSession != "sess-e2e-stream" {
+		t.Fatalf("upstream x-opencode-session = %q, want sess-e2e-stream", upstreamSession)
+	}
+}
+
+func TestHandleStreaming_LegacyClient_ThreadsSessionFromMetadata(t *testing.T) {
+	var upstreamSession string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamSession = r.Header.Get("x-opencode-session")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, "event: message_start\ndata: {}\n\n")
+		_, _ = fmt.Fprintf(w, "event: message_stop\ndata: {}\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer upstream.Close()
+
+	handler := newStreamingTestHandler(t, upstream.URL)
+
+	rawBody := json.RawMessage(`{
+		"model": "claude-opus-4-8",
+		"stream": true,
+		"max_tokens": 256,
+		"metadata": {"user_id": "{\"device_id\":\"dev-1\",\"account_uuid\":\"\",\"session_id\":\"sess-meta-e2e\"}"},
+		"messages": [{"role":"user","content":"hello"}]
+	}`)
+
+	var anthropicReq types.MessageRequest
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
+		t.Fatalf("unmarshal rawBody: %v", err)
+	}
+
+	chain := []config.ModelConfig{
+		{Provider: "opencode-go", ModelID: "minimax-m3"},
+	}
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+
+	handler.handleStreaming(recorder, req.WithContext(ctx), &anthropicReq, &core.NormalizedRequest{}, chain, rawBody, router.Scenario(""), "")
+
+	if upstreamSession != "sess-meta-e2e" {
+		t.Fatalf("upstream x-opencode-session = %q, want sess-meta-e2e", upstreamSession)
+	}
+}
+
+func TestHandleMessages_NonStreaming_ThreadsSessionHeader(t *testing.T) {
+	var upstreamSession string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamSession = r.Header.Get("x-opencode-session")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"id": "msg_1",
+			"type": "message",
+			"role": "assistant",
+			"content": [{"type": "text", "text": "hello"}],
+			"model": "minimax-m3",
+			"stop_reason": "end_turn",
+			"usage": {"input_tokens": 10, "output_tokens": 5}
+		}`))
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		Models: map[string]config.ModelConfig{
+			"default": {Provider: "opencode-go", ModelID: "kimi-k2.6"},
+		},
+		Fallbacks: map[string][]config.ModelConfig{
+			"default": {{Provider: "opencode-go", ModelID: "glm-5"}},
+		},
+		ModelOverrides: map[string]config.ModelConfig{
+			"claude-haiku-4-5-20251001": {
+				Provider: "opencode-go",
+				ModelID:  "minimax-m3",
+			},
+		},
+		OpenCodeGo: config.OpenCodeGoConfig{
+			AnthropicBaseURL: upstream.URL,
+			BaseURL:          upstream.URL,
+			TimeoutMs:        5000,
+		},
+	}
+
+	atomicCfg := config.NewAtomicConfig(cfg, "/tmp/test-config.json")
+	ocClient := client.NewOpenCodeClient(atomicCfg, nil)
+	modelRouter := router.NewModelRouter(atomicCfg)
+	tokenCounter, err := token.NewCounter()
+	if err != nil {
+		t.Fatalf("NewCounter: %v", err)
+	}
+
+	handler := NewMessagesHandler(
+		ocClient,
+		nil, // providerRegistry — legacy client path
+		modelRouter,
+		router.NewFallbackHandler(slog.Default(), 3, 30*time.Second),
+		tokenCounter,
+		metrics.New(),
+		nil, // captureLogger
+		nil, // hist
+		nil, // storage
+		nil, // emptyRespFallback
+	)
+	handler.logger = slog.Default()
+
+	requestBody := `{
+		"model": "claude-haiku-4-5-20251001",
+		"max_tokens": 256,
+		"messages": [{"role": "user", "content": "Say hello"}]
+	}`
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(requestBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-claude-code-session-id", "sess-nonstream-e2e")
+
+	handler.HandleMessages(recorder, req)
+
+	if upstreamSession != "sess-nonstream-e2e" {
+		t.Fatalf("upstream x-opencode-session = %q, want sess-nonstream-e2e", upstreamSession)
+	}
+}

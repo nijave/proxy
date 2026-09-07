@@ -254,6 +254,7 @@ func (p *OpenCodeGoProvider) executeAnthropic(ctx context.Context, req *core.Nor
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
@@ -298,6 +299,7 @@ func (p *OpenCodeGoProvider) streamAnthropic(ctx context.Context, req *core.Norm
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
@@ -330,6 +332,7 @@ func (p *OpenCodeGoProvider) doRequest(ctx context.Context, endpoint, apiKey str
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	if stream {

@@ -216,6 +216,7 @@ func (p *OpenCodeZenProvider) executeAnthropic(ctx context.Context, req *core.No
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
@@ -260,6 +261,7 @@ func (p *OpenCodeZenProvider) streamAnthropic(ctx context.Context, req *core.Nor
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	httpReq.Header.Set("x-api-key", apiKey)
@@ -406,6 +408,7 @@ func (p *OpenCodeZenProvider) doRequest(ctx context.Context, endpoint, apiKey st
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 	if stream {
@@ -437,6 +440,7 @@ func (p *OpenCodeZenProvider) doJSONRequest(ctx context.Context, endpoint, apiKe
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	client.SetSessionHeader(ctx, httpReq.Header)
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("User-Agent", upstreamUserAgent)
 
