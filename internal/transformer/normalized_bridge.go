@@ -2,7 +2,7 @@ package transformer
 
 import (
 	"encoding/json"
-	"strings"
+	"log/slog"
 
 	"github.com/routatic/proxy/internal/config"
 	"github.com/routatic/proxy/internal/core"
@@ -56,27 +56,34 @@ func NormalizedToResponses(req *core.NormalizedRequest, model config.ModelConfig
 		})
 	}
 
-	// Convert messages.
+	// Convert messages. The Responses API rejects any input item that does not
+	// match a supported shape, so tool_use/tool_result blocks become typed
+	// items (function_call / function_call_output) instead of being folded
+	// into text. Walk the canonical block list directly to preserve chronology.
 	for _, msg := range req.Messages {
-		var textParts []string
+		role := msg.Role
+		if role != "user" && role != "assistant" && role != "developer" {
+			role = "user"
+		}
 
+		var text string
 		flushText := func() {
-			if len(textParts) == 0 {
+			if text == "" {
 				return
 			}
 			responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
-				Role:    msg.Role,
-				Content: rawJSONString(strings.Join(textParts, "")),
+				Role:    role,
+				Content: rawJSONString(text),
 			})
-			textParts = nil
+			text = ""
 		}
 
+		toolResults := msg.ToolResultsList()
+		toolResultIndex := 0
 		for _, block := range msg.Blocks {
 			switch block.Type {
 			case "text":
-				textParts = append(textParts, block.Text)
-			case "image":
-				textParts = append(textParts, "[Image]")
+				text += block.Text
 			case "tool_use":
 				flushText()
 				arguments := string(block.Input)
@@ -91,14 +98,22 @@ func NormalizedToResponses(req *core.NormalizedRequest, model config.ModelConfig
 				})
 			case "tool_result":
 				flushText()
+				tr := toolResults[toolResultIndex]
+				toolResultIndex++
 				responsesReq.Input = append(responsesReq.Input, types.ResponsesInput{
 					Type:   "function_call_output",
-					CallID: block.ToolUseID,
-					Output: normalizedToolResultText(block.Content),
+					CallID: tr.ToolCallID,
+					Output: rawJSONString(tr.Content),
 				})
+			default:
+				flushText()
+				slog.Warn(
+					"dropping unsupported Responses input block",
+					"type", block.Type,
+					"role", msg.Role,
+				)
 			}
 		}
-
 		flushText()
 	}
 
@@ -233,6 +248,7 @@ func ResponsesToNormalized(responsesResp *types.ResponsesResponse, modelID strin
 		ID:    responsesResp.ID,
 		Model: modelID,
 	}
+	hasToolCall := false
 
 	for _, output := range responsesResp.Output {
 		switch output.Type {
@@ -247,18 +263,23 @@ func ResponsesToNormalized(responsesResp *types.ResponsesResponse, modelID strin
 			}
 			nr.Messages = append(nr.Messages, nm)
 		case "function_call":
+			hasToolCall = true
 			nm := core.NormalizedMessage{
 				Role: "assistant",
 				Blocks: []core.NormalizedContentBlock{{
 					Type: "tool_use", ID: output.CallID, Name: output.Name,
-					Input: []byte(output.Arguments),
+					Input: []byte(normalizeToolArguments(output.Arguments)),
 				}},
 			}
 			nr.Messages = append(nr.Messages, nm)
 		}
 	}
 
-	nr.StopReason = "end_turn"
+	if hasToolCall {
+		nr.StopReason = "tool_use"
+	} else {
+		nr.StopReason = "end_turn"
+	}
 
 	nr.Usage = core.NormalizedUsage{
 		InputTokens:  responsesResp.Usage.InputTokens,

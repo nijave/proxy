@@ -1072,6 +1072,7 @@ func TestOpenRouterChatCompletion_UsesAttributionHeaders(t *testing.T) {
 		{name: "referer", header: "HTTP-Referer", want: "https://github.com/routatic/proxy"},
 		{name: "title", header: "X-OpenRouter-Title", want: "routatic-proxy"},
 		{name: "category", header: "X-OpenRouter-Categories", want: "cli-agent"},
+		{name: "no opencode session", header: "x-opencode-session", want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1336,5 +1337,71 @@ func TestCloudflareChatCompletion_EmptyKeyOmitsAuthorization(t *testing.T) {
 	}
 	if gotAuth != "" {
 		t.Errorf("Authorization = %q, want absent when no key resolves (was dangling %q)", gotAuth, "Bearer ")
+	}
+}
+
+func TestOpenCodeClient_SetsOpenCodeSessionHeader(t *testing.T) {
+	var gotSession string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get(core.OpenCodeSessionHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-1","object":"chat.completion","created":1,"model":"deepseek-v4-pro","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeGo: config.OpenCodeGoConfig{
+			BaseURL: ts.URL,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderOpenCodeGo, ModelID: "deepseek-v4-pro"}
+	req := &types.ChatCompletionRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+	}
+	ctx := core.WithSessionID(context.Background(), "client-session-1")
+	if _, err := c.ChatCompletionNonStreaming(ctx, "deepseek-v4-pro", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+
+	if gotSession != "client-session-1" {
+		t.Errorf("%s = %q, want %q", core.OpenCodeSessionHeader, gotSession, "client-session-1")
+	}
+}
+
+func TestOpenCodeClient_ZenOmitsOpenCodeSessionHeader(t *testing.T) {
+	var gotSession string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get(core.OpenCodeSessionHeader)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-1","object":"chat.completion","created":1,"model":"deepseek-v4-flash-free","choices":[],"usage":{}}`))
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		APIKey: "test-key",
+		OpenCodeZen: config.OpenCodeZenConfig{
+			BaseURL: ts.URL,
+		},
+	}
+	atomicCfg := config.NewAtomicConfig(cfg, "")
+	c := NewOpenCodeClient(atomicCfg, nil)
+
+	model := config.ModelConfig{Provider: ProviderOpenCodeZen, ModelID: "deepseek-v4-flash-free"}
+	req := &types.ChatCompletionRequest{
+		Model:    "deepseek-v4-flash-free",
+		Messages: []types.ChatMessage{{Role: "user", Content: json.RawMessage(`"hello"`)}},
+	}
+	ctx := core.WithSessionID(context.Background(), "client-session-1")
+	if _, err := c.ChatCompletionNonStreaming(ctx, "deepseek-v4-flash-free", req, model); err != nil {
+		t.Fatalf("ChatCompletionNonStreaming() error = %v", err)
+	}
+
+	if gotSession != "" {
+		t.Errorf("OpenCode Zen must not receive %s, got %q", core.OpenCodeSessionHeader, gotSession)
 	}
 }

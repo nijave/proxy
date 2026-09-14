@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -724,10 +725,9 @@ func usageInfoToAnthropic(usage *types.UsageInfo) *types.Usage {
 	}
 }
 
-// responsesUsageToAnthropic maps Responses API usage to Anthropic semantics
-// per the same convention documented on usageInfoToAnthropic: input_tokens
-// counts only non-cached input, and input_tokens_details.cached_tokens
-// surfaces as cache_read_input_tokens.
+// responsesUsageToAnthropic maps Responses terminal usage to the Anthropic
+// terminal message_delta usage. Responses usage has no cache split, so the
+// fields map 1:1. A missing terminal event keeps the old zero behavior.
 func responsesUsageToAnthropic(usage *types.ResponsesUsage) *types.Usage {
 	if usage == nil {
 		return &types.Usage{
@@ -801,198 +801,6 @@ func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-// responsesStreamState tracks the Anthropic content-block lifecycle while
-// converting an OpenAI Responses SSE stream. The Responses grammar addresses
-// output items by upstream item_id and interleaves text, reasoning, and
-// function_call items; Anthropic SSE requires contiguous block indices with
-// exactly one content_block_stop per started block.
-type responsesStreamState struct {
-	nextIndex  int  // next Anthropic content block index to assign
-	textOpen   bool // a text block is open at textIndex
-	textIndex  int
-	toolBlocks map[string]int  // upstream item key → Anthropic block index
-	openTools  []string        // item keys of tool blocks not yet stopped, in open order
-	argsSent   map[string]bool // item key → any input_json_delta emitted
-	toolCount  int             // tool_use blocks started this stream
-	usage      *types.ResponsesUsage
-	stopSent   bool // terminal message_delta already emitted
-}
-
-func newResponsesStreamState() *responsesStreamState {
-	return &responsesStreamState{
-		toolBlocks: make(map[string]int),
-		argsSent:   make(map[string]bool),
-	}
-}
-
-// closeTextBlock stops the open text block, if any.
-func (s *responsesStreamState) closeTextBlock(w http.ResponseWriter) error {
-	if !s.textOpen {
-		return nil
-	}
-	s.textOpen = false
-	return writeContentBlockStop(w, s.textIndex)
-}
-
-// startToolBlock closes any open text block and opens a tool_use block for the
-// given upstream item key.
-func (s *responsesStreamState) startToolBlock(w http.ResponseWriter, key, toolID, name string) error {
-	if err := s.closeTextBlock(w); err != nil {
-		return err
-	}
-	idx := s.nextIndex
-	s.nextIndex++
-	s.toolBlocks[key] = idx
-	s.openTools = append(s.openTools, key)
-	s.toolCount++
-	return writeSSEEvent(w, types.MessageEvent{
-		Type:  "content_block_start",
-		Index: &idx,
-		ContentBlock: &types.ContentBlock{
-			Type:  "tool_use",
-			ID:    toolID,
-			Name:  name,
-			Input: json.RawMessage(`{}`),
-		},
-	})
-}
-
-// resolveTool maps an upstream item key to its still-open block. An empty key
-// falls back to the most recently opened open tool block; unknown or already
-// stopped keys resolve to false (callers skip them silently).
-func (s *responsesStreamState) resolveTool(key string) (string, int, bool) {
-	if key != "" {
-		idx, known := s.toolBlocks[key]
-		if !known {
-			return "", 0, false
-		}
-		for _, k := range s.openTools {
-			if k == key {
-				return key, idx, true
-			}
-		}
-		return "", 0, false // already stopped
-	}
-	if len(s.openTools) == 0 {
-		return "", 0, false
-	}
-	last := s.openTools[len(s.openTools)-1]
-	return last, s.toolBlocks[last], true
-}
-
-// emitToolDelta streams one input_json_delta fragment onto the block for key.
-func (s *responsesStreamState) emitToolDelta(w http.ResponseWriter, key, partial string) error {
-	k, idx, ok := s.resolveTool(key)
-	if !ok {
-		return nil
-	}
-	s.argsSent[k] = true
-	return writeSSEEvent(w, types.MessageEvent{
-		Type:  "content_block_delta",
-		Index: &idx,
-		Delta: &types.Delta{Type: "input_json_delta", PartialJSON: partial},
-	})
-}
-
-// stopToolBlock stops the block for key exactly once (both
-// response.function_call_arguments.done and response.output_item.done may
-// fire for the same item). When no argument deltas were streamed but the full
-// arguments string is known — done events carry it — it is emitted as a
-// single delta first so the client still receives the tool input.
-func (s *responsesStreamState) stopToolBlock(w http.ResponseWriter, key, fullArgs string) error {
-	k, idx, ok := s.resolveTool(key)
-	if !ok {
-		return nil
-	}
-	if !s.argsSent[k] && fullArgs != "" {
-		if err := writeSSEEvent(w, types.MessageEvent{
-			Type:  "content_block_delta",
-			Index: &idx,
-			Delta: &types.Delta{Type: "input_json_delta", PartialJSON: fullArgs},
-		}); err != nil {
-			return err
-		}
-	}
-	for i, open := range s.openTools {
-		if open == k {
-			s.openTools = append(s.openTools[:i], s.openTools[i+1:]...)
-			break
-		}
-	}
-	return writeContentBlockStop(w, idx)
-}
-
-// closeToolsFromResponse finalizes tool blocks still open when
-// response.completed/response.done arrives, using the full output items the
-// terminal event carries. This covers upstreams that skip the per-item done
-// events entirely.
-func (s *responsesStreamState) closeToolsFromResponse(w http.ResponseWriter, resp *types.ResponsesResponse) error {
-	if resp == nil {
-		return nil
-	}
-	for i := range resp.Output {
-		item := &resp.Output[i]
-		if item.Type != "function_call" {
-			continue
-		}
-		key := responsesToolItemKey(item)
-		if _, _, ok := s.resolveTool(key); ok {
-			if err := s.stopToolBlock(w, key, item.Arguments); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// finish closes every open block (text first, then tool blocks in ascending
-// index order) and emits the terminal message_delta, at most once. It runs at
-// response.completed/response.done and again at EOF as a no-op guard.
-func (s *responsesStreamState) finish(w http.ResponseWriter, flusher http.Flusher) error {
-	if err := s.closeTextBlock(w); err != nil {
-		return err
-	}
-	if len(s.openTools) > 0 {
-		indices := make([]int, 0, len(s.openTools))
-		for _, k := range s.openTools {
-			indices = append(indices, s.toolBlocks[k])
-		}
-		s.openTools = nil
-		sort.Ints(indices)
-		for _, idx := range indices {
-			if err := writeContentBlockStop(w, idx); err != nil {
-				return err
-			}
-		}
-	}
-	if !s.stopSent {
-		s.stopSent = true
-		stopReason := "end_turn"
-		if s.toolCount > 0 {
-			stopReason = "tool_use"
-		}
-		if err := writeSSEEvent(w, types.MessageEvent{
-			Type:  "message_delta",
-			Delta: &types.Delta{StopReason: stopReason},
-			Usage: responsesUsageToAnthropic(s.usage),
-		}); err != nil {
-			return err
-		}
-		flusher.Flush()
-	}
-	return nil
-}
-
-// responsesToolItemKey derives the correlation key for a function_call output
-// item. Streaming events address items by item_id, which is the item's id
-// field; call_id is a fallback for upstreams that omit it.
-func responsesToolItemKey(item *types.ResponsesOutput) string {
-	if item.ID != "" {
-		return item.ID
-	}
-	return item.CallID
-}
-
 // ProxyResponsesStream takes an OpenAI Responses streaming response and writes Anthropic-format SSE.
 // streamCtx is the per-model attempt context (carries streaming_timeout_ms); the caller should
 // wrap responsesResp with NewCtxReadCloser so the body read also respects the deadline.
@@ -1026,8 +834,14 @@ func (h *StreamHandler) ProxyResponsesStream(
 	}
 	flusher.Flush()
 
-	st := newResponsesStreamState()
+	contentIndex := 0
 	var lineBuf []byte
+	contentStarted := false
+	reasoningStarted := false
+	hasToolUse := false
+	startedToolCalls := make(map[string]int)
+	toolArguments := make(map[string]*strings.Builder)
+	var terminalUsage *types.ResponsesUsage
 	readBuf := readBufPool.Get().(*[]byte)
 	defer readBufPool.Put(readBuf)
 
@@ -1046,7 +860,7 @@ func (h *StreamHandler) ProxyResponsesStream(
 			for i := 0; i < n; i++ {
 				b := (*readBuf)[i]
 				if b == '\n' {
-					if err := h.processResponsesSSELine(w, flusher, lineBuf, st); err != nil {
+					if err := h.processResponsesSSELine(w, flusher, lineBuf, &contentIndex, &contentStarted, &reasoningStarted, &hasToolUse, startedToolCalls, toolArguments, originalModel, &terminalUsage); err != nil {
 						return err
 					}
 					lineBuf = lineBuf[:0]
@@ -1058,7 +872,7 @@ func (h *StreamHandler) ProxyResponsesStream(
 
 		if err == io.EOF {
 			if len(lineBuf) > 0 {
-				if err := h.processResponsesSSELine(w, flusher, lineBuf, st); err != nil {
+				if err := h.processResponsesSSELine(w, flusher, lineBuf, &contentIndex, &contentStarted, &reasoningStarted, &hasToolUse, startedToolCalls, toolArguments, originalModel, &terminalUsage); err != nil {
 					return err
 				}
 			}
@@ -1075,10 +889,65 @@ func (h *StreamHandler) ProxyResponsesStream(
 		}
 	}
 
-	// Streams that ended without response.completed still need every started
-	// block stopped exactly once and a terminal message_delta. When the
-	// terminal event already arrived, finish is a no-op guard.
-	if err := st.finish(w, flusher); err != nil {
+	// Flush arguments for a tool call whose completion event was not delivered
+	// before the stream ended. This preserves partial Responses streams while
+	// still applying the same argument normalization as completed calls.
+	for toolID, blockIdx := range startedToolCalls {
+		arguments := normalizeToolArguments(toolArguments[toolID].String())
+		if arguments == "" || arguments == "{}" {
+			continue
+		}
+		event := types.MessageEvent{
+			Type:  "content_block_delta",
+			Index: &blockIdx,
+			Delta: &types.Delta{Type: "input_json_delta", PartialJSON: arguments},
+		}
+		if err := writeSSEEvent(w, event); err != nil {
+			return ErrClientDisconnected
+		}
+	}
+
+	// Close any open text block, then any tool_use blocks the upstream left
+	// open (e.g. abort mid-call), in ascending index order, so content_block_stop
+	// always precedes the terminal message_delta.
+	if contentStarted {
+		stopEvent := types.MessageEvent{
+			Type:  "content_block_stop",
+			Index: &contentIndex,
+		}
+		if err := writeSSEEvent(w, stopEvent); err != nil {
+			return ErrClientDisconnected
+		}
+	}
+	if len(startedToolCalls) > 0 {
+		indices := make([]int, 0, len(startedToolCalls))
+		for _, blockIdx := range startedToolCalls {
+			indices = append(indices, blockIdx)
+		}
+		sort.Ints(indices)
+		for _, blockIdx := range indices {
+			stopEvent := types.MessageEvent{
+				Type:  "content_block_stop",
+				Index: &blockIdx,
+			}
+			if err := writeSSEEvent(w, stopEvent); err != nil {
+				return ErrClientDisconnected
+			}
+		}
+	}
+
+	stopReason := "end_turn"
+	if hasToolUse {
+		stopReason = "tool_use"
+	}
+	msgDelta := types.MessageEvent{
+		Type: "message_delta",
+		Delta: &types.Delta{
+			StopReason: stopReason,
+		},
+		Usage: responsesUsageToAnthropic(terminalUsage),
+	}
+	if err := writeSSEEvent(w, msgDelta); err != nil {
 		return ErrClientDisconnected
 	}
 
@@ -1097,7 +966,14 @@ func (h *StreamHandler) processResponsesSSELine(
 	w http.ResponseWriter,
 	flusher http.Flusher,
 	line []byte,
-	st *responsesStreamState,
+	contentIndex *int,
+	contentStarted *bool,
+	reasoningStarted *bool,
+	hasToolUse *bool,
+	startedToolCalls map[string]int,
+	toolArguments map[string]*strings.Builder,
+	originalModel string,
+	terminalUsage **types.ResponsesUsage,
 ) error {
 	line = bytes.TrimSpace(line)
 	if len(line) == 0 || !bytes.HasPrefix(line, []byte("data: ")) {
@@ -1111,112 +987,153 @@ func (h *StreamHandler) processResponsesSSELine(
 
 	var chunk types.ResponsesChunk
 	if err := json.Unmarshal(data, &chunk); err != nil {
-		// Malformed payload — skip silently, matching the tolerant handling
-		// of unhandled event types.
 		return nil
 	}
 
-	switch chunk.Type {
-	case "response.output_text.delta":
-		if chunk.Delta == "" {
-			return nil
+	// Terminal event carries the only usage in a Responses stream.
+	// Flat shape: {"type":"response.completed","usage":{...}}.
+	// Nested shape: {"type":"response.completed","response":{"usage":{...}}}.
+	if chunk.Type == "response.completed" {
+		if chunk.Usage != nil {
+			*terminalUsage = chunk.Usage
+		} else if chunk.Response != nil && chunk.Response.Usage != nil {
+			*terminalUsage = chunk.Response.Usage
 		}
-		if !st.textOpen {
-			st.textOpen = true
-			st.textIndex = st.nextIndex
-			st.nextIndex++
+		return nil
+	}
+
+	if chunk.Type == "response.output_text.delta" && chunk.Delta != "" {
+		if !*contentStarted {
+			*contentStarted = true
 			startEvent := types.MessageEvent{
 				Type:         "content_block_start",
-				Index:        &st.textIndex,
+				Index:        contentIndex,
 				ContentBlock: &types.ContentBlock{Type: "text", Text: ""},
 			}
 			if err := writeSSEEvent(w, startEvent); err != nil {
 				return ErrClientDisconnected
 			}
 		}
+
 		delta := types.Delta{
 			Type: "text_delta",
 			Text: chunk.Delta,
 		}
 		event := types.MessageEvent{
 			Type:  "content_block_delta",
-			Index: &st.textIndex,
+			Index: contentIndex,
 			Delta: &delta,
 		}
 		if err := writeSSEEvent(w, event); err != nil {
 			return ErrClientDisconnected
 		}
 		flusher.Flush()
+	}
 
-	case "response.output_item.added":
-		if chunk.Item == nil || chunk.Item.Type != "function_call" {
+	// A function_call output item becomes an Anthropic tool_use block. Close any
+	// open text block first, then reserve and advance a unique index for the
+	// tool block so subsequent and overlapping calls cannot reuse it.
+	if chunk.Type == "response.output_item.added" {
+		fc, ok := responsesOutputItem(chunk)
+		if !ok || fc.Type != "function_call" {
 			return nil
 		}
-		key := responsesToolItemKey(chunk.Item)
-		if key == "" {
-			// Neither id nor call_id — later deltas cannot be correlated.
+		if fc.ID == "" {
 			return nil
 		}
-		if _, _, open := st.resolveTool(key); open {
-			// Duplicate added event for an item already in flight.
-			return nil
+		closed, err := closeOpenBlock(w, *contentIndex, contentStarted, reasoningStarted)
+		if err != nil {
+			return ErrClientDisconnected
 		}
-		toolID := chunk.Item.CallID
-		if toolID == "" {
-			toolID = chunk.Item.ID
+		if closed {
+			*contentIndex++
 		}
+		blockIdx := *contentIndex
+		startedToolCalls[fc.ID] = blockIdx
+		arguments := new(strings.Builder)
+		arguments.WriteString(fc.Arguments)
+		toolArguments[fc.ID] = arguments
+		*hasToolUse = true
+
+		toolID := fc.CallID
 		if toolID == "" {
 			toolID = fmt.Sprintf("toolu_%s", generateID())
 		}
-		if err := st.startToolBlock(w, key, toolID, chunk.Item.Name); err != nil {
+		startEvent := types.MessageEvent{
+			Type:  "content_block_start",
+			Index: &blockIdx,
+			ContentBlock: &types.ContentBlock{
+				Type:  "tool_use",
+				ID:    toolID,
+				Name:  fc.Name,
+				Input: json.RawMessage(`{}`),
+			},
+		}
+		if err := writeSSEEvent(w, startEvent); err != nil {
 			return ErrClientDisconnected
 		}
+		*contentIndex++
 		flusher.Flush()
+	}
 
-	case "response.function_call_arguments.delta":
-		if chunk.Delta == "" {
-			return nil
-		}
-		if err := st.emitToolDelta(w, chunk.ItemID, chunk.Delta); err != nil {
-			return ErrClientDisconnected
-		}
-		flusher.Flush()
-
-	case "response.function_call_arguments.done":
-		if err := st.stopToolBlock(w, chunk.ItemID, chunk.Arguments); err != nil {
-			return ErrClientDisconnected
-		}
-		flusher.Flush()
-
-	case "response.output_item.done":
-		if chunk.Item == nil || chunk.Item.Type != "function_call" {
-			return nil
-		}
-		if err := st.stopToolBlock(w, responsesToolItemKey(chunk.Item), chunk.Item.Arguments); err != nil {
-			return ErrClientDisconnected
-		}
-		flusher.Flush()
-
-	case "response.completed", "response.done":
-		if chunk.Response != nil {
-			// Only capture non-zero usage so a later bare response.done does
-			// not clobber the numbers from response.completed.
-			if u := chunk.Response.Usage; u.InputTokens > 0 || u.OutputTokens > 0 {
-				st.usage = &u
-			}
-			if err := st.closeToolsFromResponse(w, chunk.Response); err != nil {
-				return ErrClientDisconnected
-			}
-		}
-		if err := st.finish(w, flusher); err != nil {
-			return ErrClientDisconnected
+	// Incremental arguments for an open function_call.
+	if chunk.Type == "response.function_call_arguments.delta" && chunk.Delta != "" {
+		if _, exists := startedToolCalls[chunk.ItemID]; exists {
+			// Buffer the complete JSON argument so whitespace-suffixed keys can
+			// be repaired before Claude Code validates the tool call.
+			toolArguments[chunk.ItemID].WriteString(chunk.Delta)
 		}
 	}
 
-	// All other event types (response.created, response.in_progress,
-	// reasoning summary deltas, ping, ...) are skipped: they carry content we
-	// do not forward, and no partial Anthropic SSE may be emitted for them.
+	// A completed function_call closes its tool_use block.
+	if chunk.Type == "response.output_item.done" {
+		fc, ok := responsesOutputItem(chunk)
+		if !ok || fc.Type != "function_call" {
+			return nil
+		}
+		if blockIdx, exists := startedToolCalls[fc.ID]; exists {
+			arguments := fc.Arguments
+			if arguments == "" {
+				arguments = toolArguments[fc.ID].String()
+			}
+			arguments = normalizeToolArguments(arguments)
+			if arguments != "" && arguments != "{}" {
+				event := types.MessageEvent{
+					Type:  "content_block_delta",
+					Index: &blockIdx,
+					Delta: &types.Delta{Type: "input_json_delta", PartialJSON: arguments},
+				}
+				if err := writeSSEEvent(w, event); err != nil {
+					return ErrClientDisconnected
+				}
+			}
+			stopEvent := types.MessageEvent{
+				Type:  "content_block_stop",
+				Index: &blockIdx,
+			}
+			if err := writeSSEEvent(w, stopEvent); err != nil {
+				return ErrClientDisconnected
+			}
+			delete(startedToolCalls, fc.ID)
+			delete(toolArguments, fc.ID)
+			flusher.Flush()
+		}
+	}
+
 	return nil
+}
+
+// responsesOutputItem returns the output item carried by an output_item event.
+// opencode.ai's Responses endpoint puts the item in the "item" field while the
+// OpenAI reference format uses an "output" array; accept both.
+func responsesOutputItem(chunk types.ResponsesChunk) (types.ResponsesOutput, bool) {
+	if chunk.Item != nil {
+		return *chunk.Item, true
+	}
+	if len(chunk.Output) > 0 {
+		return chunk.Output[0], true
+	}
+	return types.ResponsesOutput{}, false
 }
 
 // ProxyGeminiStream takes a Gemini streaming response and writes Anthropic-format SSE.
