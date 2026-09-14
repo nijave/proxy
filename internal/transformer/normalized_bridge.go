@@ -434,30 +434,6 @@ func rawJSONString(s string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// normalizedToolResultText extracts the text of a tool_result block's raw
-// content, which may be a JSON string or an array of content blocks.
-func normalizedToolResultText(raw json.RawMessage) string {
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return text
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		for _, block := range blocks {
-			if block.Type == "text" {
-				text += block.Text
-			}
-		}
-		if text != "" {
-			return text
-		}
-	}
-	return string(raw)
-}
-
 // joinMessageText concatenates the content of all messages for use as a
 // fallback when the transform pipeline fails.
 func joinMessageText(messages []core.NormalizedMessage) string {
