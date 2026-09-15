@@ -29,7 +29,6 @@ func (t *RequestTransformer) TransformToResponses(
 	for _, msg := range anthropicReq.Messages {
 		blocks := msg.ContentBlocks()
 		var textParts []string
-
 		flushText := func() {
 			if len(textParts) == 0 {
 				return
@@ -54,6 +53,7 @@ func (t *RequestTransformer) TransformToResponses(
 				textParts = append(textParts, "[Image]")
 			case "tool_use":
 				flushText()
+				// Tool calls are typed items, not text.
 				arguments := string(block.Input)
 				if arguments == "" {
 					arguments = "{}"
@@ -66,10 +66,11 @@ func (t *RequestTransformer) TransformToResponses(
 				})
 			case "tool_result":
 				flushText()
+				// Tool results are typed items, not {"role":"tool"} messages.
 				input = append(input, types.ResponsesInput{
 					Type:   "function_call_output",
 					CallID: block.ToolUseID,
-					Output: block.TextContent(),
+					Output: rawJSONString(block.TextContent()),
 				})
 			}
 		}
